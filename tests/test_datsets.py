@@ -111,6 +111,58 @@ class TestDatasets(unittest.TestCase):
         self.assertEqual(2 * len(valid), len(valid_double))
         self.assertEqual(2 * len(test), len(test_double))
 
+    def test_completions_mask_prompt(self):
+        data = {"prompt": "What is the capital of France?", "completion": "Paris."}
+        self.save_data(4 * [data])
+        tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_PATH, local_files_only=True)
+
+        # mask_prompt=True should not crash and offset > 0
+        args = types.SimpleNamespace(
+            train=True, test=False, data=self.test_dir, mask_prompt=True
+        )
+        train, valid, test = datasets.load_dataset(args, tokenizer)
+        self.assertTrue(isinstance(train, datasets.CompletionsDataset))
+        tokens, offset = train.process(train[0])
+        self.assertGreater(offset, 0)
+        self.assertLess(offset, len(tokens))
+
+        # mask_prompt=False should have offset == 0
+        args_no_mask = types.SimpleNamespace(
+            train=True, test=False, data=self.test_dir, mask_prompt=False
+        )
+        train_no_mask, _, _ = datasets.load_dataset(args_no_mask, tokenizer)
+        tokens_no_mask, offset_no_mask = train_no_mask.process(train_no_mask[0])
+        self.assertEqual(offset_no_mask, 0)
+
+    def test_chat_mask_prompt(self):
+        data = {
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Hello."},
+                {"role": "assistant", "content": "How can I assist you today."},
+            ]
+        }
+        self.save_data(4 * [data])
+        tokenizer = AutoTokenizer.from_pretrained(HF_MODEL_PATH, local_files_only=True)
+
+        # mask_prompt=True should work and offset > 0
+        args = types.SimpleNamespace(
+            train=True, test=False, data=self.test_dir, mask_prompt=True
+        )
+        train, valid, test = datasets.load_dataset(args, tokenizer)
+        self.assertTrue(isinstance(train, datasets.ChatDataset))
+        tokens, offset = train.process(train[0])
+        self.assertGreater(offset, 0)
+        self.assertLess(offset, len(tokens))
+
+        # mask_prompt=False should have offset == 0
+        args_no_mask = types.SimpleNamespace(
+            train=True, test=False, data=self.test_dir, mask_prompt=False
+        )
+        train_no_mask, _, _ = datasets.load_dataset(args_no_mask, tokenizer)
+        tokens_no_mask, offset_no_mask = train_no_mask.process(train_no_mask[0])
+        self.assertEqual(offset_no_mask, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
