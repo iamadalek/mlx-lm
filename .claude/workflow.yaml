@@ -1,0 +1,123 @@
+version: 1
+project:
+  name: "mlx-lm"
+  org: "iamadalek"
+  remote: "origin"
+  domain: "coding"
+  template: "coding"
+context:
+  reference_docs:
+    - README.md
+    - CONTRIBUTING.md
+commands:
+  test:
+    full: "python -m unittest discover tests/"
+scan_signals: {}
+artifacts:
+  brief:
+    location: ".claude/briefs/"
+    format: markdown
+    tracking: github
+  output:
+    location: "PR"
+phases:
+  define:
+    brief_template:
+      - Problem
+      - Requirements
+      - Acceptance Criteria
+      - Constraints
+      - Dependencies
+  prepare:
+    design_header: "## Design Session"
+    plan_header: "## Implementation Plan"
+    review_header: "## Adversarial Review"
+    plan_confirmed_header: "## Plan Confirmed"
+    agents: {}
+  execute:
+    branch_pattern: "feature/{issue_num}-{description}"
+    pr:
+      draft: false
+    stages:
+      - name: setup
+        description: "Environment preparation, scaffolding, configuration, dependency installation"
+      - name: implement
+        description: "Core feature implementation, business logic, data models, API endpoints"
+      - name: test
+        description: "Writing and running tests, test infrastructure, mocks, fixtures"
+      - name: verify
+        description: "Final validation, integration checks, documentation updates, cleanup"
+  review:
+    review_header: "## Deliverable Review"
+    iteration_threshold: 3
+    stages:
+      - requirements-check
+      - integrity-check
+      - standards-check
+      - quality-check
+  ship:
+    stages:
+      - name: pr-approved
+        execution_mode: manual
+      - name: merge
+        execution_mode: automated
+      - name: cleanup
+        execution_mode: automated
+quality_gates:
+  define:
+    - name: brief-completeness
+      check: "All required brief sections are populated"
+      severity: blocking
+  prepare:
+    - name: plan-has-tests
+      check: "Implementation plan includes a testing strategy"
+      severity: blocking
+    - name: plan-reviewed
+      check: "Plan has been adversarially reviewed with no unresolved blocking issues"
+      severity: blocking
+  execute:
+    - name: tests-pass
+      check: "Full test suite exits with code 0"
+      severity: blocking
+      mode: automated
+      command: "python -m unittest discover tests/"
+    - name: ci-green
+      check: "CI pipeline passes on the feature branch"
+      severity: blocking
+      mode: manual
+    - name: no-vulnerabilities
+      check: "No known security vulnerabilities introduced"
+      severity: blocking
+      mode: agent
+  review:
+    - name: requirements-met
+      check: "All brief acceptance criteria have corresponding deliverable evidence"
+      severity: blocking
+    - name: no-regressions
+      check: "No regressions introduced since plan approval"
+      severity: blocking
+    - name: docs-current
+      check: "Documentation reflects the delivered changes"
+      severity: advisory
+  ship:
+    - name: pr-approved
+      check: "PR has human approval with zero blocking review items"
+      severity: blocking
+      mode: manual
+    - name: branch-clean
+      check: "Feature branch is clean and rebased on main"
+      severity: blocking
+      mode: automated
+      command: "git status --porcelain"
+agents_generated:
+  - security-reviewer.md
+  - architecture-critic.md
+  - test-strategist.md
+skills_generated:
+  - testing-patterns
+  - project-conventions
+context_files_generated: []
+declined_migrations: []
+_meta:
+  generated_by: structured-workflows:setup
+  generated_at: "2026-03-02"
