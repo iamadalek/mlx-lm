@@ -149,6 +149,89 @@ class TestToolParsing(unittest.TestCase):
                 }
                 self.assertEqual(tool_call, expected)
 
+    def test_qwen3_coder_object_params(self):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_contact",
+                    "description": "Create a contact.",
+                    "parameters": {
+                        "type": "object",
+                        "required": ["info", "tags"],
+                        "properties": {
+                            "info": {
+                                "type": "object",
+                                "description": "Contact info",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "description": "Tags",
+                            },
+                            "metadata": {
+                                "type": "dict",
+                                "description": "Extra metadata",
+                            },
+                        },
+                    },
+                },
+            }
+        ]
+
+        test_cases = [
+            # Case 1: Single-quoted dict + array (the bug — json.loads fails,
+            # ast.literal_eval succeeds)
+            (
+                "single-quoted",
+                "<function=create_contact>"
+                "<parameter=info>{'name': 'Alice', 'email': 'a@b.com'}</parameter>"
+                "<parameter=tags>['meeting', 'daily']</parameter>"
+                "</function>",
+                {
+                    "name": "create_contact",
+                    "arguments": {
+                        "info": {"name": "Alice", "email": "a@b.com"},
+                        "tags": ["meeting", "daily"],
+                    },
+                },
+            ),
+            # Case 2: Valid JSON dict + array (regression guard — json.loads
+            # succeeds directly)
+            (
+                "valid-json",
+                "<function=create_contact>"
+                '<parameter=info>{"name": "Alice", "email": "a@b.com"}</parameter>'
+                '<parameter=tags>["meeting", "daily"]</parameter>'
+                "</function>",
+                {
+                    "name": "create_contact",
+                    "arguments": {
+                        "info": {"name": "Alice", "email": "a@b.com"},
+                        "tags": ["meeting", "daily"],
+                    },
+                },
+            ),
+            # Case 3: Dict type prefix with mixed types (covers
+            # startswith("dict") branch)
+            (
+                "dict-prefix",
+                "<function=create_contact>"
+                "<parameter=metadata>{'key': 123}</parameter>"
+                "</function>",
+                {
+                    "name": "create_contact",
+                    "arguments": {
+                        "metadata": {"key": 123},
+                    },
+                },
+            ),
+        ]
+
+        for label, model_output, expected in test_cases:
+            with self.subTest(case=label):
+                result = qwen3_coder.parse_tool_call(model_output, tools)
+                self.assertEqual(result, expected)
+
     def test_kimi_k2(self):
         # Single tool call
         test_case = (
