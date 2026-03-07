@@ -13,6 +13,7 @@ from .base import create_causal_mask
 def make_prompt_cache(
     model: nn.Module,
     max_kv_size: Optional[int] = None,
+    compact_kv_budget: Optional[int] = None,
 ) -> List[Any]:
     """
     Construct the model's cache for use in generation.
@@ -25,6 +26,9 @@ def make_prompt_cache(
         max_kv_size (Optional[int]): If provided and the model does not have a
             ``make_cache`` method, a ``RotatingKVCache`` is used with a maximum
             size of ``max_kv_size``
+        compact_kv_budget (Optional[int]): If provided and the model does not
+            have a ``make_cache`` method, a ``CompressedKVCache`` is used with
+            the given budget for L2-norm based eviction.
     """
     if hasattr(model, "make_cache"):
         return model.make_cache()
@@ -33,6 +37,10 @@ def make_prompt_cache(
     if max_kv_size is not None:
         return [
             RotatingKVCache(max_size=max_kv_size, keep=4) for _ in range(num_layers)
+        ]
+    elif compact_kv_budget is not None:
+        return [
+            CompressedKVCache(budget=compact_kv_budget) for _ in range(num_layers)
         ]
     else:
         return [KVCache() for _ in range(num_layers)]
@@ -578,6 +586,161 @@ class RotatingKVCache(_BaseCache):
     @classmethod
     def merge(_, caches):
         return BatchRotatingKVCache.merge(caches)
+
+    def empty(self):
+        return self.keys is None
+
+    @property
+    def nbytes(self):
+        if self.keys is None:
+            return 0
+        return self.keys.nbytes + self.values.nbytes
+
+
+class CompressedKVCache(_BaseCache):
+    """KV cache with L2-norm based key eviction for intelligent compression.
+
+    Maintains a budget of cached tokens by evicting those with the highest
+    L2-norm keys (least "average" tokens), while protecting recent tokens
+    from eviction. Compatible with GQA architectures.
+
+    Args:
+        budget (int): Maximum number of tokens to retain after compaction.
+        keep_recent (int): Number of recent tokens protected from eviction.
+    """
+
+    step = 256
+
+    def __init__(self, budget: int, keep_recent: int = 32):
+        self.keys = None
+        self.values = None
+        self.offset = 0
+        self._physical_idx = 0
+        self.budget = budget
+        self.keep_recent = keep_recent
+
+    def update_and_fetch(self, keys, values):
+        prev = self._physical_idx
+        if self.keys is None or (prev + keys.shape[2]) > self.keys.shape[2]:
+            B, n_kv_heads, _, k_head_dim = keys.shape
+            v_head_dim = values.shape[3]
+            n_steps = (self.step + keys.shape[2] - 1) // self.step
+            k_shape = (B, n_kv_heads, n_steps * self.step, k_head_dim)
+            v_shape = (B, n_kv_heads, n_steps * self.step, v_head_dim)
+            new_k = mx.zeros(k_shape, keys.dtype)
+            new_v = mx.zeros(v_shape, values.dtype)
+            if self.keys is not None:
+                if prev % self.step != 0:
+                    self.keys = self.keys[..., :prev, :]
+                    self.values = self.values[..., :prev, :]
+                self.keys = mx.concatenate([self.keys, new_k], axis=2)
+                self.values = mx.concatenate([self.values, new_v], axis=2)
+            else:
+                self.keys, self.values = new_k, new_v
+
+        self._physical_idx += keys.shape[2]
+        self.offset += keys.shape[2]
+        self.keys[..., prev : self._physical_idx, :] = keys
+        self.values[..., prev : self._physical_idx, :] = values
+        return (
+            self.keys[..., : self._physical_idx, :],
+            self.values[..., : self._physical_idx, :],
+        )
+
+    def compact(self):
+        if self._physical_idx <= self.budget:
+            return
+        if self.budget <= self.keep_recent:
+            return
+
+        active_keys = self.keys[..., : self._physical_idx, :]
+        active_values = self.values[..., : self._physical_idx, :]
+
+        # L2 norms per token per head: (B, n_kv_heads, seq_len)
+        norms = mx.linalg.norm(active_keys, axis=-1)
+        # Aggregate across heads: (B, seq_len)
+        norms = norms.sum(axis=1)
+
+        seq_len = self._physical_idx
+        n_evictable = seq_len - self.keep_recent
+        n_keep_from_evictable = self.budget - self.keep_recent
+
+        # Score only the evictable (non-recent) tokens
+        evictable_norms = norms[:, :n_evictable]
+        # Ascending sort: lowest norms first (most "average" tokens kept)
+        sorted_indices = mx.argsort(evictable_norms, axis=-1)
+        kept_evictable = sorted_indices[:, :n_keep_from_evictable]
+
+        # Combine with protected recent token indices
+        recent_indices = mx.arange(n_evictable, seq_len)
+        recent_indices = mx.broadcast_to(
+            recent_indices[None, :], (kept_evictable.shape[0], self.keep_recent)
+        )
+        all_kept = mx.concatenate([kept_evictable, recent_indices], axis=-1)
+
+        # Sort to preserve temporal order
+        all_kept = mx.sort(all_kept, axis=-1)
+
+        # Expand for gather: (B, 1, budget, 1)
+        gather_idx = all_kept[:, None, :, None]
+        k_idx = mx.broadcast_to(gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3]))
+        v_idx = mx.broadcast_to(gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3]))
+
+        new_keys = mx.take_along_axis(active_keys, k_idx, axis=2)
+        new_values = mx.take_along_axis(active_values, v_idx, axis=2)
+
+        mx.eval(new_keys, new_values)
+        self.keys = new_keys
+        self.values = new_values
+        self._physical_idx = self.budget
+        # offset is NOT modified (critical invariant for RoPE)
+        mx.clear_cache()
+
+    def size(self):
+        return self._physical_idx
+
+    @property
+    def state(self):
+        if self.keys is None:
+            return []
+        return (
+            self.keys[..., : self._physical_idx, :],
+            self.values[..., : self._physical_idx, :],
+        )
+
+    @state.setter
+    def state(self, v):
+        if v is not None and v:
+            self.keys, self.values = v
+
+    @property
+    def meta_state(self):
+        return tuple(
+            map(str, (self.offset, self._physical_idx, self.budget, self.keep_recent))
+        )
+
+    @meta_state.setter
+    def meta_state(self, v):
+        self.offset, self._physical_idx, self.budget, self.keep_recent = map(int, v)
+
+    def is_trimmable(self):
+        return True
+
+    def trim(self, n):
+        n = min(self._physical_idx, n)
+        self._physical_idx -= n
+        self.offset -= n
+        return n
+
+    def to_quantized(self, group_size: int = 64, bits: int = 4) -> QuantizedKVCache:
+        raise NotImplementedError("CompressedKVCache quantization NYI")
+
+    def make_mask(
+        self, N: int, return_array: bool = False, window_size: Optional[int] = None
+    ):
+        return create_attention_mask(
+            N, offset=self._physical_idx, return_array=return_array, window_size=window_size
+        )
 
     def empty(self):
         return self.keys is None

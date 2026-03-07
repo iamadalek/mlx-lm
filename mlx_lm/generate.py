@@ -29,6 +29,7 @@ from .models.cache import (
     BatchKVCache,
     BatchRotatingKVCache,
     CacheList,
+    CompressedKVCache,
     KVCache,
     QuantizedKVCache,
     RotatingKVCache,
@@ -215,6 +216,13 @@ def setup_arg_parser():
         help="Number of tokens to draft when using speculative decoding.",
         default=3,
     )
+    parser.add_argument(
+        "--compact-kv-budget",
+        type=int,
+        help="If set, use a CompressedKVCache that evicts tokens by L2-norm "
+        "to stay within the given budget.",
+        default=None,
+    )
     return parser
 
 
@@ -300,6 +308,12 @@ def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_
             prompt_cache[e] = c.to_quantized(group_size=kv_group_size, bits=kv_bits)
 
 
+def maybe_compact_kv_cache(prompt_cache):
+    for c in prompt_cache:
+        if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget:
+            c.compact()
+
+
 def generate_step(
     prompt: mx.array,
     model: nn.Module,
@@ -315,6 +329,7 @@ def generate_step(
     quantized_kv_start: int = 0,
     prompt_progress_callback: Optional[Callable[[int, int], None]] = None,
     input_embeddings: Optional[mx.array] = None,
+    compact_kv_budget: Optional[int] = None,
 ) -> Generator[Tuple[mx.array, mx.array], None, None]:
     """
     A generator producing token ids based on the given prompt from the model.
@@ -343,6 +358,8 @@ def generate_step(
            prompt tokens processed so far and the total number of prompt tokens.
         input_embeddings (mx.array, optional): Input embeddings to use instead of or in
           conjunction with prompt tokens. Default: ``None``.
+        compact_kv_budget (int, optional): If provided, use a CompressedKVCache with
+          the given budget. Compaction runs before quantization. Default: ``None``.
 
     Yields:
         Tuple[mx.array, mx.array]: One token and a vector of log probabilities.
@@ -368,9 +385,12 @@ def generate_step(
         prompt_cache = cache.make_prompt_cache(
             model,
             max_kv_size=max_kv_size,
+            compact_kv_budget=compact_kv_budget,
         )
 
     prompt_progress_callback = prompt_progress_callback or (lambda *_: None)
+
+    compact_cache_fn = functools.partial(maybe_compact_kv_cache)
 
     quantize_cache_fn = functools.partial(
         maybe_quantize_kv_cache,
@@ -411,6 +431,7 @@ def generate_step(
                 for processor in logits_processors:
                     logits = processor(tokens, logits)
 
+            compact_cache_fn(prompt_cache)
             quantize_cache_fn(prompt_cache)
 
             logprobs = logits - mx.logsumexp(logits, keepdims=True)
@@ -434,6 +455,7 @@ def generate_step(
                     else None
                 ),
             )
+            compact_cache_fn(prompt_cache)
             quantize_cache_fn(prompt_cache)
             mx.eval([c.state for c in prompt_cache])
             prompt_processed_tokens += n_to_process
@@ -1521,6 +1543,7 @@ def main():
         kv_bits=args.kv_bits,
         kv_group_size=args.kv_group_size,
         quantized_kv_start=args.quantized_kv_start,
+        compact_kv_budget=args.compact_kv_budget,
         draft_model=draft_model,
         num_draft_tokens=args.num_draft_tokens,
     )
