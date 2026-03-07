@@ -647,7 +647,15 @@ class CompressedKVCache(_BaseCache):
             self.values[..., : self._physical_idx, :],
         )
 
-    def compact(self):
+    def compact(self, kept_indices: Optional[mx.array] = None):
+        """Compact the cache by evicting tokens with the highest L2-norm keys.
+
+        Args:
+            kept_indices: Pre-computed indices of tokens to keep, shape
+                ``(B, budget)``, sorted in temporal order. When provided, skips
+                norm computation and uses these directly. This enables
+                cross-layer coherent eviction (same tokens kept in all layers).
+        """
         if self._physical_idx <= self.budget:
             return
         if self.budget <= self.keep_recent:
@@ -656,11 +664,29 @@ class CompressedKVCache(_BaseCache):
         active_keys = self.keys[..., : self._physical_idx, :]
         active_values = self.values[..., : self._physical_idx, :]
 
+        if kept_indices is None:
+            kept_indices = self._compute_kept_indices(active_keys)
+
+        # Expand for gather: (B, 1, budget, 1)
+        gather_idx = kept_indices[:, None, :, None]
+        k_idx = mx.broadcast_to(gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3]))
+        v_idx = mx.broadcast_to(gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3]))
+
+        self.keys = mx.take_along_axis(active_keys, k_idx, axis=2)
+        self.values = mx.take_along_axis(active_values, v_idx, axis=2)
+        self._physical_idx = self.budget
+        # offset is NOT modified (critical invariant for RoPE)
+
+    def _compute_kept_indices(self, active_keys: mx.array) -> mx.array:
+        """Compute which token indices to keep based on L2-norm scoring."""
         # L2 norms per token per head: (B, n_kv_heads, seq_len)
         norms = mx.linalg.norm(active_keys, axis=-1)
         # Aggregate across heads: (B, seq_len)
         norms = norms.sum(axis=1)
+        return self._indices_from_norms(norms)
 
+    def _indices_from_norms(self, norms: mx.array) -> mx.array:
+        """Given per-token aggregated norms (B, seq_len), return kept indices."""
         seq_len = self._physical_idx
         n_evictable = seq_len - self.keep_recent
         n_keep_from_evictable = self.budget - self.keep_recent
@@ -679,22 +705,7 @@ class CompressedKVCache(_BaseCache):
         all_kept = mx.concatenate([kept_evictable, recent_indices], axis=-1)
 
         # Sort to preserve temporal order
-        all_kept = mx.sort(all_kept, axis=-1)
-
-        # Expand for gather: (B, 1, budget, 1)
-        gather_idx = all_kept[:, None, :, None]
-        k_idx = mx.broadcast_to(gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3]))
-        v_idx = mx.broadcast_to(gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3]))
-
-        new_keys = mx.take_along_axis(active_keys, k_idx, axis=2)
-        new_values = mx.take_along_axis(active_values, v_idx, axis=2)
-
-        mx.eval(new_keys, new_values)
-        self.keys = new_keys
-        self.values = new_values
-        self._physical_idx = self.budget
-        # offset is NOT modified (critical invariant for RoPE)
-        mx.clear_cache()
+        return mx.sort(all_kept, axis=-1)
 
     def size(self):
         return self._physical_idx

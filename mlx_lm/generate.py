@@ -309,9 +309,29 @@ def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_
 
 
 def maybe_compact_kv_cache(prompt_cache):
-    for c in prompt_cache:
-        if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget:
-            c.compact()
+    to_compact = [
+        c for c in prompt_cache
+        if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget
+    ]
+    if not to_compact:
+        return
+
+    # Compute shared eviction indices by aggregating norms across all layers.
+    # This ensures the same tokens are kept in every layer (cross-layer coherence)
+    # and reduces argsort from N_layers to 1.
+    ref = to_compact[0]
+    agg_norms = None
+    for c in to_compact:
+        active_keys = c.keys[..., : c._physical_idx, :]
+        norms = mx.linalg.norm(active_keys, axis=-1).sum(axis=1)  # (B, seq_len)
+        agg_norms = norms if agg_norms is None else agg_norms + norms
+    kept_indices = ref._indices_from_norms(agg_norms)
+
+    for c in to_compact:
+        c.compact(kept_indices)
+
+    mx.eval(*[x for c in to_compact for x in (c.keys, c.values)])
+    mx.clear_cache()
 
 
 def generate_step(
