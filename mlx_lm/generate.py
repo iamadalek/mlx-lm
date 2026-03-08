@@ -310,7 +310,8 @@ def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_
 
 def maybe_compact_kv_cache(prompt_cache):
     to_compact = [
-        c for c in prompt_cache
+        c
+        for c in prompt_cache
         if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget
     ]
     if not to_compact:

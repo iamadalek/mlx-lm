@@ -41,7 +41,9 @@ def measure_cache_memory(cache):
 def benchmark_memory(model, tokenizer):
     """Benchmark memory before/after compaction at various context lengths."""
     print("\n=== Memory Benchmark ===")
-    print(f"{'Context':<12} {'Full (MB)':<14} {'Compressed (MB)':<18} {'Reduction':<12}")
+    print(
+        f"{'Context':<12} {'Full (MB)':<14} {'Compressed (MB)':<18} {'Reduction':<12}"
+    )
     print("-" * 56)
 
     for ctx_len in [2048, 4096, 8192]:

@@ -39,9 +39,7 @@ def make_prompt_cache(
             RotatingKVCache(max_size=max_kv_size, keep=4) for _ in range(num_layers)
         ]
     elif compact_kv_budget is not None:
-        return [
-            CompressedKVCache(budget=compact_kv_budget) for _ in range(num_layers)
-        ]
+        return [CompressedKVCache(budget=compact_kv_budget) for _ in range(num_layers)]
     else:
         return [KVCache() for _ in range(num_layers)]
 
@@ -669,8 +667,12 @@ class CompressedKVCache(_BaseCache):
 
         # Expand for gather: (B, 1, budget, 1)
         gather_idx = kept_indices[:, None, :, None]
-        k_idx = mx.broadcast_to(gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3]))
-        v_idx = mx.broadcast_to(gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3]))
+        k_idx = mx.broadcast_to(
+            gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3])
+        )
+        v_idx = mx.broadcast_to(
+            gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3])
+        )
 
         self.keys = mx.take_along_axis(active_keys, k_idx, axis=2)
         self.values = mx.take_along_axis(active_values, v_idx, axis=2)
@@ -750,7 +752,10 @@ class CompressedKVCache(_BaseCache):
         self, N: int, return_array: bool = False, window_size: Optional[int] = None
     ):
         return create_attention_mask(
-            N, offset=self._physical_idx, return_array=return_array, window_size=window_size
+            N,
+            offset=self._physical_idx,
+            return_array=return_array,
+            window_size=window_size,
         )
 
     def empty(self):

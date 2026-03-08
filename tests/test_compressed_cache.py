@@ -48,13 +48,19 @@ class TestCompressedKVCache(unittest.TestCase):
         # Lowest norms: token 2 (norm=1), token 0 (norm=2)
         # Protected: token 4
         # Kept indices (sorted): [0, 2, 4]
-        keys = mx.array([[[
-            [1.0, 1.732],   # norm ~= 2
-            [7.07, 7.07],   # norm ~= 10
-            [0.5, 0.866],   # norm ~= 1
-            [5.66, 5.66],   # norm ~= 8
-            [3.54, 3.54],   # norm ~= 5
-        ]]])  # shape (1, 1, 5, 2)
+        keys = mx.array(
+            [
+                [
+                    [
+                        [1.0, 1.732],  # norm ~= 2
+                        [7.07, 7.07],  # norm ~= 10
+                        [0.5, 0.866],  # norm ~= 1
+                        [5.66, 5.66],  # norm ~= 8
+                        [3.54, 3.54],  # norm ~= 5
+                    ]
+                ]
+            ]
+        )  # shape (1, 1, 5, 2)
         values = mx.arange(10).reshape(1, 1, 5, 2).astype(mx.float32)
 
         cache.keys = keys
@@ -96,9 +102,9 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertEqual(cache._physical_idx, 4)
         # Recent tokens must survive despite high norms
         # Kept: [0, 2] (lowest norm evictable) + [4, 5] (protected)
-        expected_values = mx.array([
-            [[[0, 1, 2, 3], [8, 9, 10, 11], [16, 17, 18, 19], [20, 21, 22, 23]]]
-        ]).astype(mx.float32)
+        expected_values = mx.array(
+            [[[[0, 1, 2, 3], [8, 9, 10, 11], [16, 17, 18, 19], [20, 21, 22, 23]]]]
+        ).astype(mx.float32)
         self.assertTrue(mx.allclose(cache.values, expected_values))
 
     def test_make_mask_uses_physical_size(self):
@@ -149,12 +155,14 @@ class TestCompressedKVCache(unittest.TestCase):
         # Aggregated (sum): [11, 11, 5, 10]
         # Evictable (first 3): [11, 11, 5]
         # Keep 2 from evictable: token 2 (5), then token 0 or 1 (both 11)
-        keys = mx.array([
+        keys = mx.array(
             [
-                [[1.0], [10.0], [2.0], [5.0]],  # head 0
-                [[10.0], [1.0], [3.0], [5.0]],  # head 1
+                [
+                    [[1.0], [10.0], [2.0], [5.0]],  # head 0
+                    [[10.0], [1.0], [3.0], [5.0]],  # head 1
+                ]
             ]
-        ])  # shape (1, 2, 4, 1)
+        )  # shape (1, 2, 4, 1)
         values = mx.arange(8).reshape(1, 2, 4, 1).astype(mx.float32)
         cache.keys = keys
         cache.values = values
@@ -171,18 +179,30 @@ class TestCompressedKVCache(unittest.TestCase):
 
     def test_values_evicted_alongside_keys(self):
         cache = CompressedKVCache(budget=3, keep_recent=1)
-        keys = mx.array([[[
-            [10.0, 0.0],  # high norm -> evict
-            [0.1, 0.0],   # low norm -> keep
-            [0.2, 0.0],   # low norm -> keep
-            [5.0, 0.0],   # protected (recent)
-        ]]])
-        values = mx.array([[[
-            [100.0, 100.0],
-            [200.0, 200.0],
-            [300.0, 300.0],
-            [400.0, 400.0],
-        ]]])
+        keys = mx.array(
+            [
+                [
+                    [
+                        [10.0, 0.0],  # high norm -> evict
+                        [0.1, 0.0],  # low norm -> keep
+                        [0.2, 0.0],  # low norm -> keep
+                        [5.0, 0.0],  # protected (recent)
+                    ]
+                ]
+            ]
+        )
+        values = mx.array(
+            [
+                [
+                    [
+                        [100.0, 100.0],
+                        [200.0, 200.0],
+                        [300.0, 300.0],
+                        [400.0, 400.0],
+                    ]
+                ]
+            ]
+        )
         cache.keys = keys
         cache.values = values
         cache._physical_idx = 4
@@ -194,11 +214,17 @@ class TestCompressedKVCache(unittest.TestCase):
         # Token 0 (high norm) should be evicted
         # Remaining values should be [200, 300, 400]
         self.assertEqual(cache._physical_idx, 3)
-        expected_vals = mx.array([[[
-            [200.0, 200.0],
-            [300.0, 300.0],
-            [400.0, 400.0],
-        ]]])
+        expected_vals = mx.array(
+            [
+                [
+                    [
+                        [200.0, 200.0],
+                        [300.0, 300.0],
+                        [400.0, 400.0],
+                    ]
+                ]
+            ]
+        )
         self.assertTrue(mx.allclose(cache.values, expected_vals))
 
     # -- Priority 3: Composability and persistence --
