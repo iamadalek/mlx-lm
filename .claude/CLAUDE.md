@@ -11,11 +11,13 @@
 ## Project Skills
 @skills/testing-patterns/SKILL.md
 @skills/project-conventions/SKILL.md
+@skills/mlx-development/SKILL.md
 
 ## Specialist Agents
 @agents/security-reviewer.md
 @agents/architecture-critic.md
 @agents/test-strategist.md
+@agents/mlx-specialist.md
 
 ## Project Documentation
 @../README.md
