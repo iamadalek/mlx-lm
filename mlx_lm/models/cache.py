@@ -688,6 +688,12 @@ class CompressedKVCache(_BaseCache):
     def compact(self, kept_indices: Optional[mx.array] = None):
         """Compact the cache by evicting tokens with the lowest L2-norm keys.
 
+        .. note::
+            Calling ``compact()`` without ``kept_indices`` computes eviction
+            from this layer's keys alone. For cross-layer coherent eviction
+            (keeping the same tokens in every layer), use
+            :func:`~mlx_lm.generate.maybe_compact_kv_cache` instead.
+
         Args:
             kept_indices: Pre-computed indices of tokens to keep, shape
                 ``(B, budget)``, sorted in temporal order. When provided, skips
@@ -787,7 +793,10 @@ class CompressedKVCache(_BaseCache):
         self.offset, self._physical_idx, self.budget, self.keep_recent = map(int, v)
 
     def is_trimmable(self):
-        return True
+        # Safe to trim only when no eviction has occurred (offset == physical).
+        # After compaction, offset diverges from _physical_idx to preserve
+        # absolute RoPE position, and trimming would break that invariant.
+        return self.offset == self._physical_idx
 
     def trim(self, n):
         n = min(self._physical_idx, n)

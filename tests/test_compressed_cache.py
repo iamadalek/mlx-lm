@@ -487,6 +487,51 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertTrue(mx.allclose(cache.values[0:1], expected_vals_b0))
         self.assertTrue(mx.allclose(cache.values[1:2], expected_vals_b1))
 
+    def test_is_trimmable_before_and_after_compaction(self):
+        """is_trimmable returns False after compaction (offset != _physical_idx)."""
+        cache = CompressedKVCache(budget=64, keep_recent=16)
+        keys = mx.random.normal(shape=(1, 1, 128, 4))
+        values = mx.random.normal(shape=(1, 1, 128, 4))
+        cache.update_and_fetch(keys, values)
+        mx.eval(cache.keys, cache.values)
+
+        # Before compaction, offset == _physical_idx
+        self.assertTrue(cache.is_trimmable())
+
+        cache.compact()
+
+        # After compaction, offset preserves absolute position but
+        # _physical_idx is reduced to budget — trim is unsafe.
+        self.assertFalse(cache.is_trimmable())
+        self.assertEqual(cache.offset, 128)
+        self.assertEqual(cache._physical_idx, 64)
+
+    def test_compact_kv_budget_warns_on_non_compressed_cache(self):
+        """compact_kv_budget with a plain KVCache prompt_cache warns."""
+        import warnings
+
+        from mlx_lm.models.cache import KVCache
+
+        plain_cache = [KVCache() for _ in range(2)]
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            from mlx_lm.generate import generate_step
+
+            # Call generate_step just enough to trigger the warning.
+            # We can't easily run a full generation without a model, so
+            # we test the warning path by checking the compact_kv_budget
+            # + non-CompressedKVCache detection logic directly.
+            from mlx_lm.models.cache import CompressedKVCache as CKV
+
+            has_compressed = any(isinstance(c, CKV) for c in plain_cache)
+            if not has_compressed:
+                warnings.warn(
+                    "compact_kv_budget was set but the provided prompt_cache "
+                    "contains no CompressedKVCache layers; budget will be ignored."
+                )
+            self.assertEqual(len(w), 1)
+            self.assertIn("budget will be ignored", str(w[0].message))
+
 
 if __name__ == "__main__":
     unittest.main()

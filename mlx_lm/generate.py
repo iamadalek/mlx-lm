@@ -347,6 +347,9 @@ def maybe_compact_kv_cache(prompt_cache):
     # Compute shared eviction indices by aggregating norms across all layers.
     # This ensures the same tokens are kept in every layer (cross-layer coherence)
     # and reduces argsort from N_layers to 1.
+    # NOTE: Norms are summed unweighted. This is correct for standard
+    # transformers (uniform head_dim/n_kv_heads). Architectures with
+    # heterogeneous KV geometry (e.g. MLA) may need per-layer normalisation.
     agg_norms = None
     for c in all_compressed:
         active_keys = c.keys[..., : c.size(), :]
@@ -448,9 +451,12 @@ def generate_step(
 
     prompt_progress_callback = prompt_progress_callback or (lambda *_: None)
 
-    has_compressed = compact_kv_budget is not None or any(
-        isinstance(c, CompressedKVCache) for c in prompt_cache
-    )
+    has_compressed = any(isinstance(c, CompressedKVCache) for c in prompt_cache)
+    if compact_kv_budget is not None and not has_compressed:
+        warnings.warn(
+            "compact_kv_budget was set but the provided prompt_cache "
+            "contains no CompressedKVCache layers; budget will be ignored."
+        )
     if has_compressed:
         compact_cache_fn = maybe_compact_kv_cache
     else:
