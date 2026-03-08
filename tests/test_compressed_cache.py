@@ -175,6 +175,11 @@ class TestCompressedKVCache(unittest.TestCase):
         # Tokens 0 and 1 (highest norms, 11) should be kept
         # Token 2 (norm 5) should be evicted
         # Token 3 is protected (recent)
+        # Values: head 0 kept=[0,1,3], head 1 kept=[4,5,7]
+        expected_values = mx.array([[[[0], [1], [3]], [[4], [5], [7]]]]).astype(
+            mx.float32
+        )
+        self.assertTrue(mx.allclose(cache.values, expected_values))
 
     def test_values_evicted_alongside_keys(self):
         cache = CompressedKVCache(budget=3, keep_recent=1)

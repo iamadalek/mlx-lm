@@ -637,18 +637,18 @@ class CompressedKVCache(_BaseCache):
     step = 256
 
     def __new__(cls, *args, **kwargs):
+        # Initialise attributes that from_state needs before meta_state is set,
+        # since _BaseCache.from_state bypasses __init__.
         obj = super().__new__(cls)
         obj.keys = None
         obj.values = None
         obj.offset = 0
         obj._physical_idx = 0
+        obj.budget = 0
+        obj.keep_recent = 0
         return obj
 
     def __init__(self, budget: int, keep_recent: int = 32):
-        self.keys = None
-        self.values = None
-        self.offset = 0
-        self._physical_idx = 0
         self.budget = budget
         self.keep_recent = keep_recent
 
@@ -681,7 +681,7 @@ class CompressedKVCache(_BaseCache):
         )
 
     def compact(self, kept_indices: Optional[mx.array] = None):
-        """Compact the cache by evicting tokens with the highest L2-norm keys.
+        """Compact the cache by evicting tokens with the lowest L2-norm keys.
 
         Args:
             kept_indices: Pre-computed indices of tokens to keep, shape
@@ -700,18 +700,19 @@ class CompressedKVCache(_BaseCache):
         if kept_indices is None:
             kept_indices = self._compute_kept_indices(active_keys)
 
-        # Expand for gather: (B, 1, budget, 1)
+        # Expand for gather: (B, 1, n_kept, 1)
+        n_kept = kept_indices.shape[1]
         gather_idx = kept_indices[:, None, :, None]
         k_idx = mx.broadcast_to(
-            gather_idx, (*active_keys.shape[:2], self.budget, active_keys.shape[3])
+            gather_idx, (*active_keys.shape[:2], n_kept, active_keys.shape[3])
         )
         v_idx = mx.broadcast_to(
-            gather_idx, (*active_values.shape[:2], self.budget, active_values.shape[3])
+            gather_idx, (*active_values.shape[:2], n_kept, active_values.shape[3])
         )
 
         self.keys = mx.take_along_axis(active_keys, k_idx, axis=2)
         self.values = mx.take_along_axis(active_values, v_idx, axis=2)
-        self._physical_idx = self.budget
+        self._physical_idx = n_kept
         # offset is NOT modified (critical invariant for RoPE)
 
     def _compute_kept_indices(self, active_keys: mx.array) -> mx.array:

@@ -326,9 +326,15 @@ def maybe_compact_kv_cache(prompt_cache):
     # This ensures the same tokens are kept in every layer (cross-layer coherence)
     # and reduces argsort from N_layers to 1.
     ref = to_compact[0]
-    assert all(
-        c.size() == ref.size() for c in to_compact
-    ), "CompressedKVCache layers have divergent sizes"
+    if not all(
+        c.size() == ref.size()
+        and c.budget == ref.budget
+        and c.keep_recent == ref.keep_recent
+        for c in to_compact
+    ):
+        raise ValueError(
+            "CompressedKVCache layers have divergent sizes or configurations"
+        )
     agg_norms = None
     for c in to_compact:
         active_keys = c.keys[..., : c.size(), :]
@@ -759,7 +765,14 @@ def stream_generate(
         )
     else:
         kwargs.pop("max_kv_size", None)
-        kwargs.pop("compact_kv_budget", None)
+        if kwargs.pop("compact_kv_budget", None) is not None:
+            import warnings
+
+            warnings.warn(
+                "compact_kv_budget is not supported with speculative decoding "
+                "and will be ignored.",
+                UserWarning,
+            )
         kwargs.pop("prompt_progress_callback", None)
         token_generator = speculative_generate_step(
             prompt, model, draft_model, **kwargs

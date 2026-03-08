@@ -68,6 +68,9 @@ def benchmark_memory(model, tokenizer):
         model(prompt_arr[None], cache=comp_cache)
         mx.eval([c.state for c in comp_cache])
 
+        # Use maybe_compact_kv_cache for cross-layer coherent eviction
+        # (matches the actual generation path). Note: bypasses hysteresis
+        # since we want to force compaction for the memory measurement.
         for c in comp_cache:
             if isinstance(c, CompressedKVCache) and c.size() > c.budget:
                 c.compact()
