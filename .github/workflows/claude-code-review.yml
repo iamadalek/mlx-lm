@@ -34,7 +34,9 @@ jobs:
                   "Bash(gh pr review*)",
                   "Bash(gh pr comment*)",
                   "Bash(gh issue view*)",
-                  "Bash(cat /tmp/*)"
+                  "Bash(cat /tmp/*)",
+                  "Read",
+                  "Write(/tmp/*)"
                 ]
               }
             }
