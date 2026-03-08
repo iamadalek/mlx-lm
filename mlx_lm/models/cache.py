@@ -1,6 +1,7 @@
 # Copyright © 2023-2024 Apple Inc.
 
 import copy
+import warnings
 from typing import Any, Dict, List, Optional
 
 import mlx.core as mx
@@ -39,8 +40,6 @@ def make_prompt_cache(
 
     if hasattr(model, "make_cache"):
         if max_kv_size is not None or compact_kv_budget is not None:
-            import warnings
-
             warnings.warn(
                 "Model provides make_cache(); max_kv_size and "
                 "compact_kv_budget are ignored.",
@@ -613,7 +612,7 @@ class RotatingKVCache(_BaseCache):
 class CompressedKVCache(_BaseCache):
     """KV cache with L2-norm based key eviction for intelligent compression.
 
-    Maintains a budget of cached tokens by evicting those with the highest
+    Maintains a budget of cached tokens by evicting those with the lowest
     L2-norm keys, while protecting recent tokens from eviction. Compatible
     with GQA architectures.
 
@@ -705,6 +704,11 @@ class CompressedKVCache(_BaseCache):
 
         if kept_indices is None:
             kept_indices = self._compute_kept_indices(active_keys)
+        elif kept_indices.shape[1] != self.budget:
+            raise ValueError(
+                f"kept_indices must have shape[1] == budget ({self.budget}), "
+                f"got {kept_indices.shape[1]}"
+            )
 
         # Expand for gather: (B, 1, n_kept, 1)
         n_kept = kept_indices.shape[1]

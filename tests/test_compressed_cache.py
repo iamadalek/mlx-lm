@@ -441,6 +441,22 @@ class TestCompressedKVCache(unittest.TestCase):
                 )
             )
 
+    def test_divergent_layers_raises(self):
+        """Verify that maybe_compact_kv_cache raises on divergent layer configs."""
+        from mlx_lm.generate import maybe_compact_kv_cache
+
+        cache1 = CompressedKVCache(budget=64, keep_recent=8)
+        cache2 = CompressedKVCache(budget=128, keep_recent=8)
+        # Fill both well beyond hysteresis threshold
+        for c in [cache1, cache2]:
+            keys = mx.random.normal(shape=(1, 4, 256, 32))
+            values = mx.random.normal(shape=(1, 4, 256, 32))
+            c.update_and_fetch(keys, values)
+            mx.eval(c.keys, c.values)
+
+        with self.assertRaises(ValueError):
+            maybe_compact_kv_cache([cache1, cache2])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,6 +6,7 @@ import functools
 import json
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from functools import partial
 from typing import (
@@ -772,8 +773,6 @@ def stream_generate(
     else:
         kwargs.pop("max_kv_size", None)
         if kwargs.pop("compact_kv_budget", None) is not None:
-            import warnings
-
             warnings.warn(
                 "compact_kv_budget is not supported with speculative decoding "
                 "and will be ignored.",
