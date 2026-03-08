@@ -597,11 +597,26 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertEqual(cache._physical_idx, physical_before)
 
     def test_indices_from_norms_rejects_short_seq(self):
-        """indices_from_norms raises when seq_len < keep_recent."""
+        """indices_from_norms raises when seq_len <= keep_recent."""
         cache = CompressedKVCache(budget=64, keep_recent=16)
-        short_norms = mx.ones((1, 8))  # seq_len=8 < keep_recent=16
+        # seq_len < keep_recent
         with self.assertRaises(ValueError):
-            cache.indices_from_norms(short_norms)
+            cache.indices_from_norms(mx.ones((1, 8)))
+        # seq_len == keep_recent (boundary: n_evictable would be 0)
+        with self.assertRaises(ValueError):
+            cache.indices_from_norms(mx.ones((1, 16)))
+
+    def test_constructor_rejects_negative_keep_recent(self):
+        """Constructor rejects keep_recent < 0."""
+        with self.assertRaises(ValueError):
+            CompressedKVCache(budget=64, keep_recent=-1)
+
+    def test_constructor_rejects_zero_budget(self):
+        """Constructor rejects budget <= 0."""
+        with self.assertRaises(ValueError):
+            CompressedKVCache(budget=0, keep_recent=-1)
+        with self.assertRaises(ValueError):
+            CompressedKVCache(budget=-1)
 
 
 if __name__ == "__main__":

@@ -648,12 +648,14 @@ class CompressedKVCache(_BaseCache):
         return obj
 
     def __init__(self, budget: int, keep_recent: int = 32):
+        if budget <= 0:
+            raise ValueError("budget must be a positive integer")
+        if keep_recent < 0:
+            raise ValueError("keep_recent must be non-negative")
         if budget <= keep_recent:
             raise ValueError(
                 f"budget ({budget}) must be greater than keep_recent ({keep_recent})"
             )
-        if budget <= 0:
-            raise ValueError("budget must be a positive integer")
         self.budget = budget
         self.keep_recent = keep_recent
 
@@ -751,9 +753,9 @@ class CompressedKVCache(_BaseCache):
         coherent eviction.
         """
         seq_len = norms.shape[1]
-        if seq_len < self.keep_recent:
+        if seq_len <= self.keep_recent:
             raise ValueError(
-                f"norms seq_len ({seq_len}) < keep_recent ({self.keep_recent})"
+                f"norms seq_len ({seq_len}) must be > keep_recent ({self.keep_recent})"
             )
         n_evictable = seq_len - self.keep_recent
         n_keep_from_evictable = self.budget - self.keep_recent
