@@ -355,7 +355,7 @@ def maybe_compact_kv_cache(prompt_cache):
         active_keys = c.keys[..., : c.size(), :]
         norms = mx.linalg.norm(active_keys, axis=-1).sum(axis=1)  # (B, seq_len)
         agg_norms = norms if agg_norms is None else agg_norms + norms
-    kept_indices = ref._indices_from_norms(agg_norms)
+    kept_indices = ref.indices_from_norms(agg_norms)
 
     for c in all_compressed:
         c.compact(kept_indices)

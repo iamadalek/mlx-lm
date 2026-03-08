@@ -513,24 +513,95 @@ class TestCompressedKVCache(unittest.TestCase):
         from mlx_lm.models.cache import KVCache
 
         plain_cache = [KVCache() for _ in range(2)]
+
+        # Stub model returns a dummy logit tensor so generate_step can
+        # proceed past the model call. The warning fires before it.
+        def stub_model(*a, **k):
+            return mx.zeros((1, 1, 32))
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             from mlx_lm.generate import generate_step
 
-            # Call generate_step just enough to trigger the warning.
-            # We can't easily run a full generation without a model, so
-            # we test the warning path by checking the compact_kv_budget
-            # + non-CompressedKVCache detection logic directly.
-            from mlx_lm.models.cache import CompressedKVCache as CKV
+            gen = generate_step(
+                prompt=mx.array([1, 2, 3]),
+                model=stub_model,
+                prompt_cache=plain_cache,
+                compact_kv_budget=128,
+            )
+            # Advance the generator to trigger the warning path.
+            try:
+                next(gen)
+            except Exception:
+                pass
 
-            has_compressed = any(isinstance(c, CKV) for c in plain_cache)
-            if not has_compressed:
-                warnings.warn(
-                    "compact_kv_budget was set but the provided prompt_cache "
-                    "contains no CompressedKVCache layers; budget will be ignored."
-                )
-            self.assertEqual(len(w), 1)
-            self.assertIn("budget will be ignored", str(w[0].message))
+        budget_warnings = [x for x in w if "budget will be ignored" in str(x.message)]
+        self.assertEqual(len(budget_warnings), 1)
+
+    def test_save_load_continue_generation_after_compaction(self):
+        """After save/load of a compacted cache, generation continues correctly."""
+        import tempfile
+
+        cache = CompressedKVCache(budget=64, keep_recent=16)
+        # Fill past budget to trigger compaction
+        keys = mx.random.normal(shape=(1, 2, 128, 8))
+        values = mx.random.normal(shape=(1, 2, 128, 8))
+        cache.update_and_fetch(keys, values)
+        mx.eval(cache.keys, cache.values)
+
+        # Compact — offset diverges from _physical_idx
+        cache.compact()
+        self.assertEqual(cache.offset, 128)
+        self.assertEqual(cache._physical_idx, 64)
+
+        # Round-trip through save/load
+        saved_state = cache.state
+        saved_meta = cache.meta_state
+        mx.eval(saved_state)
+
+        restored = CompressedKVCache.__new__(CompressedKVCache)
+        restored.meta_state = saved_meta
+        restored.state = saved_state
+
+        self.assertEqual(restored.offset, 128)
+        self.assertEqual(restored._physical_idx, 64)
+
+        # Continue generation — append new tokens
+        new_keys = mx.random.normal(shape=(1, 2, 1, 8))
+        new_values = mx.random.normal(shape=(1, 2, 1, 8))
+        restored.update_and_fetch(new_keys, new_values)
+        mx.eval(restored.keys, restored.values)
+
+        # offset advances for RoPE, _physical_idx tracks actual length
+        self.assertEqual(restored.offset, 129)
+        self.assertEqual(restored._physical_idx, 65)
+        # is_trimmable remains False since offset != _physical_idx
+        self.assertFalse(restored.is_trimmable())
+
+    def test_trim_is_noop_after_compaction(self):
+        """trim() returns 0 after compaction to protect RoPE invariant."""
+        cache = CompressedKVCache(budget=64, keep_recent=16)
+        keys = mx.random.normal(shape=(1, 1, 128, 4))
+        values = mx.random.normal(shape=(1, 1, 128, 4))
+        cache.update_and_fetch(keys, values)
+        mx.eval(cache.keys, cache.values)
+
+        cache.compact()
+        offset_before = cache.offset
+        physical_before = cache._physical_idx
+
+        # trim should be a no-op
+        trimmed = cache.trim(10)
+        self.assertEqual(trimmed, 0)
+        self.assertEqual(cache.offset, offset_before)
+        self.assertEqual(cache._physical_idx, physical_before)
+
+    def test_indices_from_norms_rejects_short_seq(self):
+        """indices_from_norms raises when seq_len < keep_recent."""
+        cache = CompressedKVCache(budget=64, keep_recent=16)
+        short_norms = mx.ones((1, 8))  # seq_len=8 < keep_recent=16
+        with self.assertRaises(ValueError):
+            cache.indices_from_norms(short_norms)
 
 
 if __name__ == "__main__":

@@ -741,11 +741,20 @@ class CompressedKVCache(_BaseCache):
         norms = mx.linalg.norm(active_keys, axis=-1)
         # Aggregate across heads: (B, seq_len)
         norms = norms.sum(axis=1)
-        return self._indices_from_norms(norms)
+        return self.indices_from_norms(norms)
 
-    def _indices_from_norms(self, norms: mx.array) -> mx.array:
-        """Given per-token aggregated norms (B, seq_len), return kept indices."""
+    def indices_from_norms(self, norms: mx.array) -> mx.array:
+        """Given per-token aggregated norms ``(B, seq_len)``, return kept indices.
+
+        This is the public entry-point used by
+        :func:`~mlx_lm.generate.maybe_compact_kv_cache` for cross-layer
+        coherent eviction.
+        """
         seq_len = norms.shape[1]
+        if seq_len < self.keep_recent:
+            raise ValueError(
+                f"norms seq_len ({seq_len}) < keep_recent ({self.keep_recent})"
+            )
         n_evictable = seq_len - self.keep_recent
         n_keep_from_evictable = self.budget - self.keep_recent
 
@@ -799,6 +808,8 @@ class CompressedKVCache(_BaseCache):
         return self.offset == self._physical_idx
 
     def trim(self, n):
+        if not self.is_trimmable():
+            return 0
         n = min(self._physical_idx, n)
         self._physical_idx -= n
         self.offset -= n

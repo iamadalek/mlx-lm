@@ -5,7 +5,7 @@
 Measures:
 1. Memory before/after compaction at 2K/4K/8K contexts
 2. Compaction latency on M4 Max
-3. Extraction quality preservation (8/10 prompts equivalent)
+3. Extraction quality preservation (coherent responses after eviction)
 """
 
 import time
