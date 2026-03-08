@@ -46,8 +46,9 @@ jobs:
             1. Read the PR diff by running: git diff origin/main...HEAD
             2. Read all changed files carefully using the Read tool
             3. Analyze the changes through the 4 review stages below
-            4. Write your review to /tmp/review.md using the Write tool
-            5. Post it using: gh pr comment $PR_NUMBER --repo $GITHUB_REPOSITORY --body-file /tmp/review.md
+            4. Write your review to /tmp/review.md using the Write tool. Use full markdown formatting with headers, code blocks, bold text, etc.
+            5. Post it by running this exact command (do not modify it, do not try to verify env vars first):
+               gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file /tmp/review.md
 
             ## Review Stages
 
@@ -94,6 +95,3 @@ jobs:
             - Quality: PASS/FAIL
           additional_permissions: |
             actions: read
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
