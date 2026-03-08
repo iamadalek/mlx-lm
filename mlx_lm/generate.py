@@ -326,6 +326,9 @@ def maybe_compact_kv_cache(prompt_cache):
     # This ensures the same tokens are kept in every layer (cross-layer coherence)
     # and reduces argsort from N_layers to 1.
     ref = to_compact[0]
+    assert all(
+        c.size() == ref.size() for c in to_compact
+    ), "CompressedKVCache layers have divergent sizes"
     agg_norms = None
     for c in to_compact:
         active_keys = c.keys[..., : c.size(), :]
@@ -385,7 +388,10 @@ def generate_step(
         input_embeddings (mx.array, optional): Input embeddings to use instead of or in
           conjunction with prompt tokens. Default: ``None``.
         compact_kv_budget (int, optional): If provided, use a CompressedKVCache with
-          the given budget. Compaction runs before quantization. Default: ``None``.
+          the given budget. The cache is allowed to grow up to ``budget + margin``
+          tokens before compaction triggers (margin = ``max(keep_recent, 64)``),
+          then compacts back to ``budget``. Mutually exclusive with ``kv_bits``.
+          Default: ``None``.
 
     Yields:
         Tuple[mx.array, mx.array]: One token and a vector of log probabilities.
@@ -402,6 +408,12 @@ def generate_step(
     elif len(prompt) == 0:
         raise ValueError(
             "Either input_embeddings or prompt (or both) must be provided."
+        )
+
+    if compact_kv_budget is not None and kv_bits is not None:
+        raise ValueError(
+            "compact_kv_budget and kv_bits (KV quantization) are currently "
+            "mutually exclusive. CompressedKVCache quantization is not yet implemented."
         )
 
     tokens = None

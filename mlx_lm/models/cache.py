@@ -38,6 +38,14 @@ def make_prompt_cache(
         )
 
     if hasattr(model, "make_cache"):
+        if max_kv_size is not None or compact_kv_budget is not None:
+            import warnings
+
+            warnings.warn(
+                "Model provides make_cache(); max_kv_size and "
+                "compact_kv_budget are ignored.",
+                UserWarning,
+            )
         return model.make_cache()
 
     num_layers = len(model.layers)
@@ -609,11 +617,14 @@ class CompressedKVCache(_BaseCache):
     L2-norm keys, while protecting recent tokens from eviction. Compatible
     with GQA architectures.
 
-    **Eviction heuristic rationale**: Tokens whose key vectors have small
-    L2-norms contribute less to attention scores (since attention is
-    proportional to the dot product of queries and keys). By evicting
-    high-norm keys first we retain the "average" tokens that provide broad
-    context, while the protected recent window preserves local coherence.
+    **Eviction heuristic rationale**: Tokens whose key vectors have large
+    L2-norms tend to attract more attention (since attention is proportional
+    to the dot product of queries and keys). These high-norm keys often
+    correspond to "attention sinks" (BOS, punctuation, etc.) whose removal
+    causes cascading attention collapse (cf. H2O, Zhang et al. 2023;
+    ScissorHands, Liu et al. 2023). By keeping high-norm keys and evicting
+    low-norm ones, we retain the tokens most critical for attention
+    stability, while the protected recent window preserves local coherence.
     Cross-layer coherent eviction (via ``maybe_compact_kv_cache``) ensures
     the same token positions are kept across all layers, maintaining
     representational consistency.
@@ -624,6 +635,14 @@ class CompressedKVCache(_BaseCache):
     """
 
     step = 256
+
+    def __new__(cls, *args, **kwargs):
+        obj = super().__new__(cls)
+        obj.keys = None
+        obj.values = None
+        obj.offset = 0
+        obj._physical_idx = 0
+        return obj
 
     def __init__(self, budget: int, keep_recent: int = 32):
         self.keys = None
@@ -711,8 +730,8 @@ class CompressedKVCache(_BaseCache):
 
         # Score only the evictable (non-recent) tokens
         evictable_norms = norms[:, :n_evictable]
-        # Ascending sort: lowest norms first (most "average" tokens kept)
-        sorted_indices = mx.argsort(evictable_norms, axis=-1)
+        # Descending sort: highest norms first (attention sinks kept)
+        sorted_indices = mx.argsort(-evictable_norms, axis=-1)
         kept_evictable = sorted_indices[:, :n_keep_from_evictable]
 
         # Combine with protected recent token indices

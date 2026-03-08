@@ -45,9 +45,9 @@ class TestCompressedKVCache(unittest.TestCase):
         # Token norms: [2, 10, 1, 8, 5]
         # Evictable (first 4): norms [2, 10, 1, 8]
         # Budget - keep_recent = 2 tokens to keep from evictable
-        # Lowest norms: token 2 (norm=1), token 0 (norm=2)
+        # Highest norms (attention sinks): token 1 (norm=10), token 3 (norm=8)
         # Protected: token 4
-        # Kept indices (sorted): [0, 2, 4]
+        # Kept indices (sorted): [1, 3, 4]
         keys = mx.array(
             [
                 [
@@ -74,23 +74,22 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertEqual(cache._physical_idx, 3)
         self.assertEqual(cache.offset, 5)  # unchanged
 
-        # Check that kept values correspond to tokens 0, 2, 4
-        expected_values = mx.array([[[[0, 1], [4, 5], [8, 9]]]]).astype(mx.float32)
+        # Check that kept values correspond to tokens 1, 3, 4 (high-norm kept)
+        expected_values = mx.array([[[[2, 3], [6, 7], [8, 9]]]]).astype(mx.float32)
         self.assertTrue(mx.allclose(cache.values, expected_values))
 
     def test_recent_token_protection(self):
         cache = CompressedKVCache(budget=4, keep_recent=2)
-        # 6 tokens, give recent tokens very high norms
-        keys = mx.zeros((1, 1, 6, 4))
-        # Make recent tokens (indices 4, 5) have very high norms
+        # 6 tokens: recent tokens (indices 4, 5) have very low norms
+        # but must survive because they are protected
         keys_list = mx.zeros((1, 1, 6, 4))
-        keys_list[..., 4, :] = 100.0
-        keys_list[..., 5, :] = 200.0
-        # Make evictable tokens have varying norms
-        keys_list[..., 0, :] = 1.0
-        keys_list[..., 1, :] = 50.0  # high, should be evicted
-        keys_list[..., 2, :] = 2.0
-        keys_list[..., 3, :] = 60.0  # high, should be evicted
+        keys_list[..., 4, :] = 0.01  # low norm, protected
+        keys_list[..., 5, :] = 0.02  # low norm, protected
+        # Evictable tokens have varying norms
+        keys_list[..., 0, :] = 1.0  # low norm -> evict
+        keys_list[..., 1, :] = 50.0  # high norm -> keep
+        keys_list[..., 2, :] = 2.0  # low norm -> evict
+        keys_list[..., 3, :] = 60.0  # high norm -> keep
         cache.keys = keys_list
         cache.values = mx.arange(24).reshape(1, 1, 6, 4).astype(mx.float32)
         cache._physical_idx = 6
@@ -100,10 +99,10 @@ class TestCompressedKVCache(unittest.TestCase):
         cache.compact()
 
         self.assertEqual(cache._physical_idx, 4)
-        # Recent tokens must survive despite high norms
-        # Kept: [0, 2] (lowest norm evictable) + [4, 5] (protected)
+        # Recent tokens must survive despite low norms
+        # Kept: [1, 3] (highest norm evictable) + [4, 5] (protected)
         expected_values = mx.array(
-            [[[[0, 1, 2, 3], [8, 9, 10, 11], [16, 17, 18, 19], [20, 21, 22, 23]]]]
+            [[[[4, 5, 6, 7], [12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]]]
         ).astype(mx.float32)
         self.assertTrue(mx.allclose(cache.values, expected_values))
 
@@ -154,7 +153,7 @@ class TestCompressedKVCache(unittest.TestCase):
         # Head 1 norms: [10, 1, 3, 5]
         # Aggregated (sum): [11, 11, 5, 10]
         # Evictable (first 3): [11, 11, 5]
-        # Keep 2 from evictable: token 2 (5), then token 0 or 1 (both 11)
+        # Keep 2 highest from evictable: tokens 0 and 1 (both 11)
         keys = mx.array(
             [
                 [
@@ -173,8 +172,8 @@ class TestCompressedKVCache(unittest.TestCase):
         cache.compact()
 
         self.assertEqual(cache._physical_idx, 3)
-        # Token 2 (norm 5) should definitely be kept
-        # One of tokens 0/1 (both norm 11) should be kept
+        # Tokens 0 and 1 (highest norms, 11) should be kept
+        # Token 2 (norm 5) should be evicted
         # Token 3 is protected (recent)
 
     def test_values_evicted_alongside_keys(self):
@@ -183,9 +182,9 @@ class TestCompressedKVCache(unittest.TestCase):
             [
                 [
                     [
-                        [10.0, 0.0],  # high norm -> evict
-                        [0.1, 0.0],  # low norm -> keep
-                        [0.2, 0.0],  # low norm -> keep
+                        [10.0, 0.0],  # high norm -> keep
+                        [0.1, 0.0],  # low norm -> evict
+                        [0.2, 0.0],  # low norm -> keep (2nd highest)
                         [5.0, 0.0],  # protected (recent)
                     ]
                 ]
@@ -211,14 +210,14 @@ class TestCompressedKVCache(unittest.TestCase):
 
         cache.compact()
 
-        # Token 0 (high norm) should be evicted
-        # Remaining values should be [200, 300, 400]
+        # Token 1 (lowest norm) should be evicted
+        # Remaining values should be [100, 300, 400]
         self.assertEqual(cache._physical_idx, 3)
         expected_vals = mx.array(
             [
                 [
                     [
-                        [200.0, 200.0],
+                        [100.0, 100.0],
                         [300.0, 300.0],
                         [400.0, 400.0],
                     ]
@@ -410,6 +409,36 @@ class TestCompressedKVCache(unittest.TestCase):
         model = FakeModel()
         with self.assertRaises(ValueError):
             make_prompt_cache(model, max_kv_size=512, compact_kv_budget=256)
+
+    def test_from_state_empty_cache(self):
+        """Verify that from_state with empty state doesn't cause AttributeError."""
+        cache = CompressedKVCache(budget=64, keep_recent=8)
+        # Empty cache: state == [], meta_state has zeros
+        state = cache.state
+        meta_state = cache.meta_state
+
+        loaded = CompressedKVCache.from_state(state, meta_state)
+        self.assertIsNone(loaded.keys)
+        self.assertIsNone(loaded.values)
+        self.assertTrue(loaded.empty())
+        self.assertEqual(loaded.size(), 0)
+
+    def test_compact_kv_budget_with_kv_bits_raises(self):
+        """Verify that combining compact_kv_budget with kv_bits raises early."""
+        from mlx_lm.generate import generate_step
+
+        prompt = mx.array([1, 2, 3])
+        # Use a minimal mock — we just need it to reach the validation
+        with self.assertRaises(ValueError):
+            # Exhaust the generator to trigger the body
+            list(
+                generate_step(
+                    prompt,
+                    None,  # model unused, raises before model call
+                    compact_kv_budget=512,
+                    kv_bits=4,
+                )
+            )
 
 
 if __name__ == "__main__":
