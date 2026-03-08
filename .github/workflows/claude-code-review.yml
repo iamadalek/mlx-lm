@@ -24,16 +24,18 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          use_sticky_comment: true
-          display_report: true
           show_full_output: true
           prompt: |
             You are a code reviewer for mlx-lm, an Apple MLX framework for language model inference and fine-tuning on Apple Silicon.
 
-            ## Review Protocol
+            ## Instructions
 
-            Review this PR through 4 review stages, reading all changed files carefully.
+            1. Read the PR diff by running: git diff origin/main...HEAD
+            2. Read all changed files carefully
+            3. Analyze the changes through the 4 review stages below
+            4. Post your review using the gh CLI command at the end
+
+            ## Review Stages
 
             ### Stage 1: Requirements Check
             - If the PR references a GitHub issue, read that issue to understand the requirements
@@ -42,54 +44,48 @@ jobs:
 
             ### Stage 2: Integrity Check
             - **Correctness**: Logic errors, off-by-one, race conditions, resource leaks
-            - **Security**: OWASP top 10 concerns, especially around model loading from untrusted HuggingFace sources (`mlx_lm/utils.py`) and the network-exposed OpenAI-compatible API server (`mlx_lm/server.py`)
+            - **Security**: OWASP top 10 concerns, especially around model loading from untrusted HuggingFace sources and the network-exposed API server
             - **Error handling**: Explicit handling at trust boundaries, no silent failures
             - **Edge cases**: Empty inputs, boundary values, overflow scenarios
 
             ### Stage 3: Standards Check (mlx-lm conventions)
-            - **Module organization**: Dynamic CLI routing via `importlib` in `cli.py`, `main()` entry points
-            - **Configuration**: `@dataclass` pattern for config (ModelArgs, TrainingArgs)
-            - **Model structure**: Attention -> MLP -> TransformerBlock -> Model composition
-            - **Cache hierarchy**: `_BaseCache` subclasses (KVCache, RotatingKVCache, QuantizedKVCache) with `update_and_fetch`, `state`/`meta_state` properties
-            - **Testing**: `unittest.TestCase` (not pytest), `setUpClass` for expensive fixtures, `MagicMock` for MLX layers, batch-mode verification
+            - **Cache hierarchy**: _BaseCache subclasses with update_and_fetch, state/meta_state properties
+            - **Testing**: unittest.TestCase (not pytest), setUpClass for expensive fixtures
             - **Formatting**: black + isort (enforced by pre-commit)
-            - **Copyright**: Files should have `# Copyright` header
+            - **Copyright**: Files should have # Copyright header
 
             ### Stage 4: Quality Check
-            - **API design**: Public surface consistency with `mlx_lm/__init__.py` exports
-            - **Performance**: MLX-specific concerns -- lazy evaluation, `mx.eval()` placement, Metal memory (`mx.clear_cache()`), array operations efficiency
-            - **Test coverage**: New features need tests; check unit + integration coverage
+            - **Performance**: MLX-specific concerns -- lazy evaluation, mx.eval() placement, Metal memory
+            - **Test coverage**: New features need tests
             - **Dependencies**: Direction correctness, no circular imports
 
-            ## Severity Classification
+            ## Posting the Review
 
-            Classify each finding as:
-            - **MUST FIX**: Bugs, security issues, data loss risk, API contract violations
-            - **SHOULD FIX**: Convention violations, missing tests, performance issues
-            - **CONSIDER**: Style suggestions, minor improvements, documentation gaps
+            After completing your analysis, you MUST post the review using this exact command:
 
-            ## Output Format
+            gh pr review $PR_NUMBER --repo $GITHUB_REPOSITORY --comment --body "YOUR_REVIEW_HERE"
 
-            Post your review as a PR review with the following structure:
+            The environment variables $PR_NUMBER and $GITHUB_REPOSITORY are already set.
 
-            ```
+            Format your review body as:
+
             ## Code Review
 
             **Verdict: APPROVE** or **Verdict: REQUEST CHANGES**
 
             ### Summary
-            [1-3 sentence summary of the PR and overall assessment]
+            [1-3 sentence summary]
 
             ### Findings
-            [List each finding with severity, file:line, and description]
+            [List each finding with severity (MUST FIX / SHOULD FIX / CONSIDER), file:line, and description]
 
             ### Stage Results
             - Requirements: PASS/FAIL
             - Integrity: PASS/FAIL
             - Standards: PASS/FAIL
             - Quality: PASS/FAIL
-            ```
-
-            Use APPROVE if no MUST FIX findings. Use REQUEST_CHANGES if any MUST FIX findings exist.
           additional_permissions: |
             actions: read
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
