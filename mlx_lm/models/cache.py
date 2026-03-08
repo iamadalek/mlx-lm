@@ -696,8 +696,6 @@ class CompressedKVCache(_BaseCache):
         """
         if self._physical_idx <= self.budget:
             return
-        if self.budget <= self.keep_recent:
-            return
 
         active_keys = self.keys[..., : self._physical_idx, :]
         active_values = self.values[..., : self._physical_idx, :]
@@ -741,7 +739,7 @@ class CompressedKVCache(_BaseCache):
 
     def _indices_from_norms(self, norms: mx.array) -> mx.array:
         """Given per-token aggregated norms (B, seq_len), return kept indices."""
-        seq_len = self._physical_idx
+        seq_len = norms.shape[1]
         n_evictable = seq_len - self.keep_recent
         n_keep_from_evictable = self.budget - self.keep_recent
 

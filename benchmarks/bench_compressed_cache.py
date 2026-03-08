@@ -196,7 +196,7 @@ def benchmark_quality(model, tokenizer):
 
     print(f"\nCoherent: {coherent}/{len(questions)}")
     print(f"{'PASS' if coherent >= 4 else 'FAIL'}: Target >= 4/5 coherent")
-    return equivalent
+    return coherent
 
 
 def main():
@@ -211,7 +211,7 @@ def main():
     print("\n=== Summary ===")
     print(f"Memory reduction: See table above")
     print(f"Compaction latency: {avg_latency:.2f} ms (target < 5ms)")
-    print(f"Quality preservation: {n_equiv}/10 equivalent (target >= 8/10)")
+    print(f"Quality preservation: {n_equiv}/5 coherent (target >= 4/5)")
 
 
 if __name__ == "__main__":

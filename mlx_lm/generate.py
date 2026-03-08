@@ -310,23 +310,11 @@ def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_
 
 
 def maybe_compact_kv_cache(prompt_cache):
-    # Use hysteresis to avoid compacting on every token: only trigger when
-    # cache has grown meaningfully beyond budget (by keep_recent or 64 tokens,
-    # whichever is larger). This amortises the O(budget × n_layers) compaction
-    # cost across many generation steps instead of running it per-token.
-    to_compact = [
-        c
-        for c in prompt_cache
-        if isinstance(c, CompressedKVCache)
-        and c.size() > c.budget + max(c.keep_recent, 64)
-    ]
-    if not to_compact:
+    all_compressed = [c for c in prompt_cache if isinstance(c, CompressedKVCache)]
+    if not all_compressed:
         return
 
-    # Validate that ALL CompressedKVCache layers in prompt_cache are uniform,
-    # not just those above hysteresis. Divergent configs would silently break
-    # cross-layer coherence when different layers pass/fail the threshold.
-    all_compressed = [c for c in prompt_cache if isinstance(c, CompressedKVCache)]
+    # Validate uniform configuration across all layers
     ref = all_compressed[0]
     for i, c in enumerate(all_compressed):
         if c.budget != ref.budget or c.keep_recent != ref.keep_recent:
@@ -336,28 +324,40 @@ def maybe_compact_kv_cache(prompt_cache):
                 f"keep_recent={c.keep_recent} vs {ref.keep_recent}"
             )
 
-    # Compute shared eviction indices by aggregating norms across all layers.
-    # This ensures the same tokens are kept in every layer (cross-layer coherence)
-    # and reduces argsort from N_layers to 1.
-    ref_size = to_compact[0].size()
-    for i, c in enumerate(to_compact):
+    # Use hysteresis to avoid compacting on every token: only trigger when
+    # ANY layer has grown meaningfully beyond budget. Once triggered, compact
+    # ALL layers together to maintain cross-layer coherence.
+    should_compact = any(
+        c.size() > c.budget + max(c.keep_recent, 64) for c in all_compressed
+    )
+    if not should_compact:
+        return
+
+    # Verify all layers have the same physical size (can diverge after
+    # speculative-decoding rewinds via trim_prompt_cache)
+    ref_size = ref.size()
+    for i, c in enumerate(all_compressed):
         if c.size() != ref_size:
             raise ValueError(
                 f"CompressedKVCache layer {i} has size {c.size()} "
                 f"vs layer 0 size {ref_size}. This can occur after "
                 f"speculative-decoding rewinds via trim_prompt_cache."
             )
+
+    # Compute shared eviction indices by aggregating norms across all layers.
+    # This ensures the same tokens are kept in every layer (cross-layer coherence)
+    # and reduces argsort from N_layers to 1.
     agg_norms = None
-    for c in to_compact:
+    for c in all_compressed:
         active_keys = c.keys[..., : c.size(), :]
         norms = mx.linalg.norm(active_keys, axis=-1).sum(axis=1)  # (B, seq_len)
         agg_norms = norms if agg_norms is None else agg_norms + norms
     kept_indices = ref._indices_from_norms(agg_norms)
 
-    for c in to_compact:
+    for c in all_compressed:
         c.compact(kept_indices)
 
-    mx.eval([x for c in to_compact for x in (c.keys, c.values)])
+    mx.eval([x for c in all_compressed for x in (c.keys, c.values)])
     # Reclaim memory from the evicted tensor slices still held by the allocator.
     # Hysteresis ensures this runs at most every max(keep_recent, 64) tokens.
     mx.clear_cache()
