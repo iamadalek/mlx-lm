@@ -25,6 +25,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           use_sticky_comment: true
+          display_report: true
           show_full_output: true
           prompt: |
             You are a code reviewer for mlx-lm, an Apple MLX framework for language model inference and fine-tuning on Apple Silicon.
