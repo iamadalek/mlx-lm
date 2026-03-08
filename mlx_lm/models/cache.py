@@ -732,8 +732,35 @@ class CompressedKVCache(_BaseCache):
             gather_idx, (*active_values.shape[:2], n_kept, active_values.shape[3])
         )
 
-        self.keys = mx.take_along_axis(active_keys, k_idx, axis=2)
-        self.values = mx.take_along_axis(active_values, v_idx, axis=2)
+        compacted_keys = mx.take_along_axis(active_keys, k_idx, axis=2)
+        compacted_values = mx.take_along_axis(active_values, v_idx, axis=2)
+
+        # Pad to next step boundary so update_and_fetch doesn't reallocate
+        # on the very next token (keys.shape[2] must leave room for growth).
+        padded_len = ((n_kept + self.step - 1) // self.step) * self.step
+        if padded_len > n_kept:
+            k_pad = mx.zeros(
+                (
+                    *compacted_keys.shape[:2],
+                    padded_len - n_kept,
+                    compacted_keys.shape[3],
+                ),
+                compacted_keys.dtype,
+            )
+            v_pad = mx.zeros(
+                (
+                    *compacted_values.shape[:2],
+                    padded_len - n_kept,
+                    compacted_values.shape[3],
+                ),
+                compacted_values.dtype,
+            )
+            self.keys = mx.concatenate([compacted_keys, k_pad], axis=2)
+            self.values = mx.concatenate([compacted_values, v_pad], axis=2)
+        else:
+            self.keys = compacted_keys
+            self.values = compacted_values
+
         self._physical_idx = n_kept
         # offset is NOT modified (critical invariant for RoPE)
 
@@ -759,6 +786,12 @@ class CompressedKVCache(_BaseCache):
             )
         n_evictable = seq_len - self.keep_recent
         n_keep_from_evictable = self.budget - self.keep_recent
+
+        if n_keep_from_evictable > n_evictable:
+            raise ValueError(
+                f"Not enough evictable tokens ({n_evictable}) to fill budget "
+                f"({n_keep_from_evictable} needed). Ensure seq_len > budget."
+            )
 
         # Score only the evictable (non-recent) tokens
         evictable_norms = norms[:, :n_evictable]

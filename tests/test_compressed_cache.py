@@ -76,7 +76,8 @@ class TestCompressedKVCache(unittest.TestCase):
 
         # Check that kept values correspond to tokens 1, 3, 4 (high-norm kept)
         expected_values = mx.array([[[[2, 3], [6, 7], [8, 9]]]]).astype(mx.float32)
-        self.assertTrue(mx.allclose(cache.values, expected_values))
+        actual = cache.values[..., : cache._physical_idx, :]
+        self.assertTrue(mx.allclose(actual, expected_values))
 
     def test_recent_token_protection(self):
         cache = CompressedKVCache(budget=4, keep_recent=2)
@@ -104,7 +105,8 @@ class TestCompressedKVCache(unittest.TestCase):
         expected_values = mx.array(
             [[[[4, 5, 6, 7], [12, 13, 14, 15], [16, 17, 18, 19], [20, 21, 22, 23]]]]
         ).astype(mx.float32)
-        self.assertTrue(mx.allclose(cache.values, expected_values))
+        actual = cache.values[..., : cache._physical_idx, :]
+        self.assertTrue(mx.allclose(actual, expected_values))
 
     def test_make_mask_uses_physical_size(self):
         cache = CompressedKVCache(budget=2048)
@@ -179,7 +181,8 @@ class TestCompressedKVCache(unittest.TestCase):
         expected_values = mx.array([[[[0], [1], [3]], [[4], [5], [7]]]]).astype(
             mx.float32
         )
-        self.assertTrue(mx.allclose(cache.values, expected_values))
+        actual = cache.values[..., : cache._physical_idx, :]
+        self.assertTrue(mx.allclose(actual, expected_values))
 
     def test_values_evicted_alongside_keys(self):
         cache = CompressedKVCache(budget=3, keep_recent=1)
@@ -229,7 +232,8 @@ class TestCompressedKVCache(unittest.TestCase):
                 ]
             ]
         )
-        self.assertTrue(mx.allclose(cache.values, expected_vals))
+        actual = cache.values[..., : cache._physical_idx, :]
+        self.assertTrue(mx.allclose(actual, expected_vals))
 
     # -- Priority 3: Composability and persistence --
 
@@ -479,13 +483,16 @@ class TestCompressedKVCache(unittest.TestCase):
         cache.compact()
 
         self.assertEqual(cache._physical_idx, 3)
-        self.assertEqual(cache.keys.shape, (2, 1, 3, 1))
+        # Buffer is step-aligned, so check the active region only
+        active_keys = cache.keys[..., : cache._physical_idx, :]
+        self.assertEqual(active_keys.shape, (2, 1, 3, 1))
         # Batch 0: kept tokens [0, 3, 4] (indices sorted)
         # Batch 1: kept tokens [1, 2, 4] (indices sorted)
+        active_vals = cache.values[..., : cache._physical_idx, :]
         expected_vals_b0 = mx.array([[[0], [3], [4]]]).astype(mx.float32)
         expected_vals_b1 = mx.array([[[6], [7], [9]]]).astype(mx.float32)
-        self.assertTrue(mx.allclose(cache.values[0:1], expected_vals_b0))
-        self.assertTrue(mx.allclose(cache.values[1:2], expected_vals_b1))
+        self.assertTrue(mx.allclose(active_vals[0:1], expected_vals_b0))
+        self.assertTrue(mx.allclose(active_vals[1:2], expected_vals_b1))
 
     def test_is_trimmable_before_and_after_compaction(self):
         """is_trimmable returns False after compaction (offset != _physical_idx)."""
@@ -617,6 +624,29 @@ class TestCompressedKVCache(unittest.TestCase):
             CompressedKVCache(budget=0, keep_recent=-1)
         with self.assertRaises(ValueError):
             CompressedKVCache(budget=-1)
+
+    def test_no_reallocation_after_compact(self):
+        """After compact, buffer is step-aligned so next token doesn't reallocate."""
+        cache = CompressedKVCache(budget=64, keep_recent=16)
+        keys = mx.random.normal(shape=(1, 1, 192, 4))
+        values = mx.random.normal(shape=(1, 1, 192, 4))
+        cache.update_and_fetch(keys, values)
+        mx.eval(cache.keys, cache.values)
+
+        cache.compact()
+        buffer_shape_after_compact = cache.keys.shape
+        self.assertEqual(cache._physical_idx, 64)
+        # Buffer should be padded to next step multiple (256)
+        self.assertEqual(buffer_shape_after_compact[2] % cache.step, 0)
+        self.assertGreater(buffer_shape_after_compact[2], cache._physical_idx)
+
+        # Append one token — should NOT trigger reallocation
+        new_keys = mx.random.normal(shape=(1, 1, 1, 4))
+        new_values = mx.random.normal(shape=(1, 1, 1, 4))
+        cache.update_and_fetch(new_keys, new_values)
+        # Buffer shape unchanged (no concatenation happened)
+        self.assertEqual(cache.keys.shape, buffer_shape_after_compact)
+        self.assertEqual(cache._physical_idx, 65)
 
 
 if __name__ == "__main__":

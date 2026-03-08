@@ -333,15 +333,14 @@ def maybe_compact_kv_cache(prompt_cache):
     if not should_compact:
         return
 
-    # Verify all layers have the same physical size (can diverge after
-    # speculative-decoding rewinds via trim_prompt_cache)
+    # Verify all layers have the same physical size
     ref_size = ref.size()
     for i, c in enumerate(all_compressed):
         if c.size() != ref_size:
             raise ValueError(
                 f"CompressedKVCache layer {i} has size {c.size()} "
-                f"vs layer 0 size {ref_size}. This can occur after "
-                f"speculative-decoding rewinds via trim_prompt_cache."
+                f"vs layer 0 size {ref_size}. All layers must have "
+                f"the same physical size for cross-layer eviction."
             )
 
     # Compute shared eviction indices by aggregating norms across all layers.
@@ -359,11 +358,6 @@ def maybe_compact_kv_cache(prompt_cache):
 
     for c in all_compressed:
         c.compact(kept_indices)
-
-    mx.eval([x for c in all_compressed for x in (c.keys, c.values)])
-    # Reclaim memory from the evicted tensor slices still held by the allocator.
-    # Hysteresis ensures this runs at most every max(keep_recent, 64) tokens.
-    mx.clear_cache()
 
 
 def generate_step(
