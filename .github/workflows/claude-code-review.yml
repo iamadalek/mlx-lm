@@ -24,16 +24,17 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          use_sticky_comment: true
+          show_full_output: true
           prompt: |
-            Review this pull request using /structured-workflows:review.
+            Review this pull request. Read all changed files and analyze them for:
 
-            This command will:
-            1. Resolve project context from .claude/workflow.yaml
-            2. Review the PR diff against the requirements-check, integrity-check, standards-check, and quality-check stages
-            3. Produce a PASS/BLOCK verdict with severity-tiered findings
+            1. Code correctness and potential bugs
+            2. API design and consistency with the existing codebase
+            3. Test coverage for new functionality
+            4. Edge cases and error handling
+            5. Performance considerations
 
-            If no brief or issue is linked, review the PR based on its description and the diff against the base branch.
-
-            Post your review findings as a PR review (not a comment). Use "APPROVE" for PASS verdicts and "REQUEST_CHANGES" for BLOCK verdicts.
+            Provide your review as a structured summary.
           additional_permissions: |
             actions: read
