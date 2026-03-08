@@ -649,6 +649,12 @@ class CompressedKVCache(_BaseCache):
         return obj
 
     def __init__(self, budget: int, keep_recent: int = 32):
+        if budget <= keep_recent:
+            raise ValueError(
+                f"budget ({budget}) must be greater than keep_recent ({keep_recent})"
+            )
+        if budget <= 0:
+            raise ValueError("budget must be a positive integer")
         self.budget = budget
         self.keep_recent = keep_recent
 
@@ -785,7 +791,7 @@ class CompressedKVCache(_BaseCache):
         raise NotImplementedError("CompressedKVCache quantization NYI")
 
     def make_mask(
-        self, N: int, return_array: bool = False, window_size: Optional[int] = None
+        self, N: int, window_size: Optional[int] = None, return_array: bool = False
     ):
         # Uses _physical_idx (not offset) because the mask covers physical cache
         # slots. After compaction, offset preserves the true sequence position

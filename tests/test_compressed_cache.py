@@ -323,17 +323,13 @@ class TestCompressedKVCache(unittest.TestCase):
 
         self.assertEqual(cache._physical_idx, 32)
 
-    def test_keep_recent_exceeds_budget(self):
-        cache = CompressedKVCache(budget=16, keep_recent=32)
-        keys = mx.random.normal(shape=(1, 4, 64, 32))
-        values = mx.random.normal(shape=(1, 4, 64, 32))
-        cache.update_and_fetch(keys, values)
-        mx.eval(cache.keys, cache.values)
+    def test_keep_recent_exceeds_budget_raises(self):
+        with self.assertRaises(ValueError):
+            CompressedKVCache(budget=16, keep_recent=32)
 
-        original_physical = cache._physical_idx
-        cache.compact()  # should be a no-op (budget <= keep_recent)
-
-        self.assertEqual(cache._physical_idx, original_physical)
+    def test_budget_equals_keep_recent_raises(self):
+        with self.assertRaises(ValueError):
+            CompressedKVCache(budget=32, keep_recent=32)
 
     def test_single_token(self):
         cache = CompressedKVCache(budget=1024)

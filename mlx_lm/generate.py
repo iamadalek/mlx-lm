@@ -326,15 +326,18 @@ def maybe_compact_kv_cache(prompt_cache):
     # This ensures the same tokens are kept in every layer (cross-layer coherence)
     # and reduces argsort from N_layers to 1.
     ref = to_compact[0]
-    if not all(
-        c.size() == ref.size()
-        and c.budget == ref.budget
-        and c.keep_recent == ref.keep_recent
-        for c in to_compact
-    ):
-        raise ValueError(
-            "CompressedKVCache layers have divergent sizes or configurations"
-        )
+    for i, c in enumerate(to_compact):
+        if (
+            c.size() != ref.size()
+            or c.budget != ref.budget
+            or c.keep_recent != ref.keep_recent
+        ):
+            raise ValueError(
+                f"CompressedKVCache layer {i} diverges from layer 0: "
+                f"size={c.size()} vs {ref.size()}, "
+                f"budget={c.budget} vs {ref.budget}, "
+                f"keep_recent={c.keep_recent} vs {ref.keep_recent}"
+            )
     agg_norms = None
     for c in to_compact:
         active_keys = c.keys[..., : c.size(), :]
@@ -345,7 +348,7 @@ def maybe_compact_kv_cache(prompt_cache):
     for c in to_compact:
         c.compact(kept_indices)
 
-    mx.eval(*[x for c in to_compact for x in (c.keys, c.values)])
+    mx.eval([x for c in to_compact for x in (c.keys, c.values)])
     mx.clear_cache()
 
 
@@ -434,7 +437,10 @@ def generate_step(
 
     prompt_progress_callback = prompt_progress_callback or (lambda *_: None)
 
-    if compact_kv_budget is not None:
+    has_compressed = compact_kv_budget is not None or any(
+        isinstance(c, CompressedKVCache) for c in prompt_cache
+    )
+    if has_compressed:
         compact_cache_fn = maybe_compact_kv_cache
     else:
         compact_cache_fn = lambda _: None
