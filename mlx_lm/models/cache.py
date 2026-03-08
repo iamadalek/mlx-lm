@@ -704,11 +704,17 @@ class CompressedKVCache(_BaseCache):
 
         if kept_indices is None:
             kept_indices = self._compute_kept_indices(active_keys)
-        elif kept_indices.shape[1] != self.budget:
-            raise ValueError(
-                f"kept_indices must have shape[1] == budget ({self.budget}), "
-                f"got {kept_indices.shape[1]}"
-            )
+        else:
+            if kept_indices.shape[0] != active_keys.shape[0]:
+                raise ValueError(
+                    f"kept_indices batch size ({kept_indices.shape[0]}) must match "
+                    f"cache batch size ({active_keys.shape[0]})"
+                )
+            if kept_indices.shape[1] != self.budget:
+                raise ValueError(
+                    f"kept_indices must have shape[1] == budget ({self.budget}), "
+                    f"got {kept_indices.shape[1]}"
+                )
 
         # Expand for gather: (B, 1, n_kept, 1)
         n_kept = kept_indices.shape[1]

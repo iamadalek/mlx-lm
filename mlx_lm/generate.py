@@ -339,6 +339,14 @@ def maybe_compact_kv_cache(prompt_cache):
     # Compute shared eviction indices by aggregating norms across all layers.
     # This ensures the same tokens are kept in every layer (cross-layer coherence)
     # and reduces argsort from N_layers to 1.
+    ref_size = to_compact[0].size()
+    for i, c in enumerate(to_compact):
+        if c.size() != ref_size:
+            raise ValueError(
+                f"CompressedKVCache layer {i} has size {c.size()} "
+                f"vs layer 0 size {ref_size}. This can occur after "
+                f"speculative-decoding rewinds via trim_prompt_cache."
+            )
     agg_norms = None
     for c in to_compact:
         active_keys = c.keys[..., : c.size(), :]
