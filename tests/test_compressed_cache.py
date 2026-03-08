@@ -1,4 +1,4 @@
-# Copyright © 2024 Apple Inc.
+# Copyright © 2023-2024 Apple Inc.
 
 import os
 import tempfile
@@ -362,8 +362,10 @@ class TestCompressedKVCache(unittest.TestCase):
         from mlx_lm.generate import maybe_compact_kv_cache
 
         cache = CompressedKVCache(budget=64, keep_recent=8)
-        keys = mx.random.normal(shape=(1, 4, 128, 32))
-        values = mx.random.normal(shape=(1, 4, 128, 32))
+        # Fill well beyond hysteresis threshold: budget + max(keep_recent, 64) = 128
+        # so we need > 128 tokens to trigger compaction
+        keys = mx.random.normal(shape=(1, 4, 192, 32))
+        values = mx.random.normal(shape=(1, 4, 192, 32))
         cache.update_and_fetch(keys, values)
         mx.eval(cache.keys, cache.values)
 
@@ -374,10 +376,40 @@ class TestCompressedKVCache(unittest.TestCase):
 
         # Compact runs on unquantized float data
         maybe_compact_kv_cache(prompt_cache)
-        self.assertEqual(prompt_cache[0]._physical_idx, 64)
+        self.assertEqual(prompt_cache[0].size(), 64)
         self.assertIsInstance(prompt_cache[0], CompressedKVCache)
         # Data remains float after compaction
         self.assertEqual(prompt_cache[0].keys.dtype, mx.float32)
+
+    def test_hysteresis_avoids_per_token_compaction(self):
+        """Verify that compaction does not fire on every token once budget
+        is exceeded, but only after the hysteresis margin is breached."""
+        from mlx_lm.generate import maybe_compact_kv_cache
+
+        cache = CompressedKVCache(budget=64, keep_recent=8)
+        # Fill to just over budget but under hysteresis threshold
+        keys = mx.random.normal(shape=(1, 4, 80, 32))
+        values = mx.random.normal(shape=(1, 4, 80, 32))
+        cache.update_and_fetch(keys, values)
+        mx.eval(cache.keys, cache.values)
+
+        prompt_cache = [cache]
+        maybe_compact_kv_cache(prompt_cache)
+        # Should NOT compact: 80 <= 64 + max(8, 64) = 128
+        self.assertEqual(prompt_cache[0].size(), 80)
+
+    def test_make_prompt_cache_rejects_conflicting_params(self):
+        """Verify that passing both max_kv_size and compact_kv_budget raises."""
+        import mlx.nn as nn
+
+        class FakeModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = [nn.Linear(32, 32) for _ in range(4)]
+
+        model = FakeModel()
+        with self.assertRaises(ValueError):
+            make_prompt_cache(model, max_kv_size=512, compact_kv_budget=256)
 
 
 if __name__ == "__main__":

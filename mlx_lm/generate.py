@@ -309,10 +309,15 @@ def maybe_quantize_kv_cache(prompt_cache, quantized_kv_start, kv_group_size, kv_
 
 
 def maybe_compact_kv_cache(prompt_cache):
+    # Use hysteresis to avoid compacting on every token: only trigger when
+    # cache has grown meaningfully beyond budget (by keep_recent or 64 tokens,
+    # whichever is larger). This amortises the O(budget × n_layers) compaction
+    # cost across many generation steps instead of running it per-token.
     to_compact = [
         c
         for c in prompt_cache
-        if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget
+        if isinstance(c, CompressedKVCache)
+        and c.size() > c.budget + max(c.keep_recent, 64)
     ]
     if not to_compact:
         return
@@ -323,7 +328,7 @@ def maybe_compact_kv_cache(prompt_cache):
     ref = to_compact[0]
     agg_norms = None
     for c in to_compact:
-        active_keys = c.keys[..., : c._physical_idx, :]
+        active_keys = c.keys[..., : c.size(), :]
         norms = mx.linalg.norm(active_keys, axis=-1).sum(axis=1)  # (B, seq_len)
         agg_norms = norms if agg_norms is None else agg_norms + norms
     kept_indices = ref._indices_from_norms(agg_norms)
@@ -411,7 +416,10 @@ def generate_step(
 
     prompt_progress_callback = prompt_progress_callback or (lambda *_: None)
 
-    compact_cache_fn = functools.partial(maybe_compact_kv_cache)
+    if compact_kv_budget is not None:
+        compact_cache_fn = maybe_compact_kv_cache
+    else:
+        compact_cache_fn = lambda _: None
 
     quantize_cache_fn = functools.partial(
         maybe_quantize_kv_cache,
@@ -739,6 +747,7 @@ def stream_generate(
         )
     else:
         kwargs.pop("max_kv_size", None)
+        kwargs.pop("compact_kv_budget", None)
         kwargs.pop("prompt_progress_callback", None)
         token_generator = speculative_generate_step(
             prompt, model, draft_model, **kwargs

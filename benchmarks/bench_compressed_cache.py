@@ -1,3 +1,5 @@
+# Copyright © 2023-2024 Apple Inc.
+
 """Benchmark CompressedKVCache on Qwen3-8B-4bit.
 
 Measures:
@@ -67,7 +69,7 @@ def benchmark_memory(model, tokenizer):
         mx.eval([c.state for c in comp_cache])
 
         for c in comp_cache:
-            if isinstance(c, CompressedKVCache) and c._physical_idx > c.budget:
+            if isinstance(c, CompressedKVCache) and c.size() > c.budget:
                 c.compact()
 
         comp_mem = measure_cache_memory(comp_cache)

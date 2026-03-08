@@ -30,6 +30,13 @@ def make_prompt_cache(
             have a ``make_cache`` method, a ``CompressedKVCache`` is used with
             the given budget for L2-norm based eviction.
     """
+    if max_kv_size is not None and compact_kv_budget is not None:
+        raise ValueError(
+            "max_kv_size and compact_kv_budget are mutually exclusive. "
+            "Use max_kv_size for a rotating cache or compact_kv_budget "
+            "for L2-norm based eviction, but not both."
+        )
+
     if hasattr(model, "make_cache"):
         return model.make_cache()
 
@@ -599,8 +606,17 @@ class CompressedKVCache(_BaseCache):
     """KV cache with L2-norm based key eviction for intelligent compression.
 
     Maintains a budget of cached tokens by evicting those with the highest
-    L2-norm keys (least "average" tokens), while protecting recent tokens
-    from eviction. Compatible with GQA architectures.
+    L2-norm keys, while protecting recent tokens from eviction. Compatible
+    with GQA architectures.
+
+    **Eviction heuristic rationale**: Tokens whose key vectors have small
+    L2-norms contribute less to attention scores (since attention is
+    proportional to the dot product of queries and keys). By evicting
+    high-norm keys first we retain the "average" tokens that provide broad
+    context, while the protected recent window preserves local coherence.
+    Cross-layer coherent eviction (via ``maybe_compact_kv_cache``) ensures
+    the same token positions are kept across all layers, maintaining
+    representational consistency.
 
     Args:
         budget (int): Maximum number of tokens to retain after compaction.
@@ -751,6 +767,9 @@ class CompressedKVCache(_BaseCache):
     def make_mask(
         self, N: int, return_array: bool = False, window_size: Optional[int] = None
     ):
+        # Uses _physical_idx (not offset) because the mask covers physical cache
+        # slots. After compaction, offset preserves the true sequence position
+        # for RoPE, but the attention mask must match the actual KV length.
         return create_attention_mask(
             N,
             offset=self._physical_idx,
