@@ -341,7 +341,7 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertEqual(cache.offset, 1)
         self.assertEqual(cache._physical_idx, 1)
 
-    def test_budget_minus_one_triggers_compaction(self):
+    def test_budget_plus_one_triggers_compaction(self):
         cache = CompressedKVCache(budget=10, keep_recent=2)
         keys = mx.random.normal(shape=(1, 2, 11, 8))
         values = mx.random.normal(shape=(1, 2, 11, 8))

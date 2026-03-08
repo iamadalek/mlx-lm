@@ -323,22 +323,22 @@ def maybe_compact_kv_cache(prompt_cache):
     if not to_compact:
         return
 
-    # Compute shared eviction indices by aggregating norms across all layers.
-    # This ensures the same tokens are kept in every layer (cross-layer coherence)
-    # and reduces argsort from N_layers to 1.
-    ref = to_compact[0]
-    for i, c in enumerate(to_compact):
-        if (
-            c.size() != ref.size()
-            or c.budget != ref.budget
-            or c.keep_recent != ref.keep_recent
-        ):
+    # Validate that ALL CompressedKVCache layers in prompt_cache are uniform,
+    # not just those above hysteresis. Divergent configs would silently break
+    # cross-layer coherence when different layers pass/fail the threshold.
+    all_compressed = [c for c in prompt_cache if isinstance(c, CompressedKVCache)]
+    ref = all_compressed[0]
+    for i, c in enumerate(all_compressed):
+        if c.budget != ref.budget or c.keep_recent != ref.keep_recent:
             raise ValueError(
                 f"CompressedKVCache layer {i} diverges from layer 0: "
-                f"size={c.size()} vs {ref.size()}, "
                 f"budget={c.budget} vs {ref.budget}, "
                 f"keep_recent={c.keep_recent} vs {ref.keep_recent}"
             )
+
+    # Compute shared eviction indices by aggregating norms across all layers.
+    # This ensures the same tokens are kept in every layer (cross-layer coherence)
+    # and reduces argsort from N_layers to 1.
     agg_norms = None
     for c in to_compact:
         active_keys = c.keys[..., : c.size(), :]
@@ -350,6 +350,8 @@ def maybe_compact_kv_cache(prompt_cache):
         c.compact(kept_indices)
 
     mx.eval([x for c in to_compact for x in (c.keys, c.values)])
+    # Reclaim memory from the evicted tensor slices still held by the allocator.
+    # Hysteresis ensures this runs at most every max(keep_recent, 64) tokens.
     mx.clear_cache()
 
 
@@ -741,7 +743,9 @@ def stream_generate(
           then speculative decoding is used. The draft model must use the same
           tokenizer as the main model. Default: ``None``.
         kwargs: The remaining options get passed to :func:`generate_step`.
-          See :func:`generate_step` for more details.
+          See :func:`generate_step` for more details. Notable options include
+          ``compact_kv_budget`` for L2-norm based KV cache compression and
+          ``max_kv_size`` for a rotating KV cache.
 
     Yields:
         GenerationResponse: An instance containing the generated text segment and
