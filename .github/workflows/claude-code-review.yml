@@ -25,15 +25,29 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           show_full_output: true
+          settings: |
+            {
+              "permissions": {
+                "allow": [
+                  "Bash(git diff*)",
+                  "Bash(git log*)",
+                  "Bash(gh pr review*)",
+                  "Bash(gh pr comment*)",
+                  "Bash(gh issue view*)",
+                  "Bash(cat /tmp/*)"
+                ]
+              }
+            }
           prompt: |
             You are a code reviewer for mlx-lm, an Apple MLX framework for language model inference and fine-tuning on Apple Silicon.
 
             ## Instructions
 
             1. Read the PR diff by running: git diff origin/main...HEAD
-            2. Read all changed files carefully
+            2. Read all changed files carefully using the Read tool
             3. Analyze the changes through the 4 review stages below
-            4. Post your review using the gh CLI command at the end
+            4. Write your review to /tmp/review.md using the Write tool
+            5. Post it using: gh pr comment $PR_NUMBER --repo $GITHUB_REPOSITORY --body-file /tmp/review.md
 
             ## Review Stages
 
@@ -59,15 +73,9 @@ jobs:
             - **Test coverage**: New features need tests
             - **Dependencies**: Direction correctness, no circular imports
 
-            ## Posting the Review
+            ## Review Format
 
-            After completing your analysis, you MUST post the review using this exact command:
-
-            gh pr review $PR_NUMBER --repo $GITHUB_REPOSITORY --comment --body "YOUR_REVIEW_HERE"
-
-            The environment variables $PR_NUMBER and $GITHUB_REPOSITORY are already set.
-
-            Format your review body as:
+            Format your review as:
 
             ## Code Review
 
