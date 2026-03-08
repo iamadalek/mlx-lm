@@ -628,6 +628,13 @@ class CompressedKVCache(_BaseCache):
     the same token positions are kept across all layers, maintaining
     representational consistency.
 
+    .. warning::
+        Batch size B>1 is not supported. After per-batch eviction with
+        different kept indices, the scalar ``offset`` (used for RoPE) becomes
+        meaningless since each batch element retains different original
+        positions. Use ``BatchKVCache`` / ``BatchRotatingKVCache`` for
+        multi-sequence generation.
+
     Args:
         budget (int): Maximum number of tokens to retain after compaction.
         keep_recent (int): Number of recent tokens protected from eviction.
@@ -704,6 +711,13 @@ class CompressedKVCache(_BaseCache):
         """
         if self._physical_idx <= self.budget:
             return
+
+        if self.keys.shape[0] > 1:
+            raise ValueError(
+                "CompressedKVCache does not support batch size > 1. "
+                "After eviction, the scalar offset cannot represent "
+                "per-batch RoPE positions. Use BatchKVCache instead."
+            )
 
         active_keys = self.keys[..., : self._physical_idx, :]
         active_values = self.values[..., : self._physical_idx, :]

@@ -461,38 +461,19 @@ class TestCompressedKVCache(unittest.TestCase):
         with self.assertRaises(ValueError):
             maybe_compact_kv_cache([cache1, cache2])
 
-    def test_batched_compaction(self):
-        """Verify compaction works correctly with batch size > 1."""
+    def test_batched_compaction_raises(self):
+        """Verify compact() rejects batch size > 1 (RoPE offset is scalar)."""
         cache = CompressedKVCache(budget=3, keep_recent=1)
-        # B=2, 1 head, 5 tokens, dim=1
-        # Batch 0 norms: [10, 1, 2, 8, 5] -> keep highest evictable: [10, 8] + recent [5]
-        # Batch 1 norms: [1, 10, 8, 2, 5] -> keep highest evictable: [10, 8] + recent [5]
-        keys = mx.array(
-            [
-                [[[10.0], [1.0], [2.0], [8.0], [5.0]]],  # batch 0
-                [[[1.0], [10.0], [8.0], [2.0], [5.0]]],  # batch 1
-            ]
-        )  # shape (2, 1, 5, 1)
-        values = mx.arange(10).reshape(2, 1, 5, 1).astype(mx.float32)
+        keys = mx.random.normal(shape=(2, 1, 5, 4))
+        values = mx.random.normal(shape=(2, 1, 5, 4))
         cache.keys = keys
         cache.values = values
         cache._physical_idx = 5
         cache.offset = 5
         mx.eval(cache.keys, cache.values)
 
-        cache.compact()
-
-        self.assertEqual(cache._physical_idx, 3)
-        # Buffer is step-aligned, so check the active region only
-        active_keys = cache.keys[..., : cache._physical_idx, :]
-        self.assertEqual(active_keys.shape, (2, 1, 3, 1))
-        # Batch 0: kept tokens [0, 3, 4] (indices sorted)
-        # Batch 1: kept tokens [1, 2, 4] (indices sorted)
-        active_vals = cache.values[..., : cache._physical_idx, :]
-        expected_vals_b0 = mx.array([[[0], [3], [4]]]).astype(mx.float32)
-        expected_vals_b1 = mx.array([[[6], [7], [9]]]).astype(mx.float32)
-        self.assertTrue(mx.allclose(active_vals[0:1], expected_vals_b0))
-        self.assertTrue(mx.allclose(active_vals[1:2], expected_vals_b1))
+        with self.assertRaises(ValueError):
+            cache.compact()
 
     def test_is_trimmable_before_and_after_compaction(self):
         """is_trimmable returns False after compaction (offset != _physical_idx)."""
