@@ -416,6 +416,32 @@ class TestCompressedKVCache(unittest.TestCase):
         with self.assertRaises(ValueError):
             make_prompt_cache(model, max_kv_size=512, compact_kv_budget=256)
 
+    def test_make_prompt_cache_warns_when_model_has_make_cache(self):
+        """Verify warning when model provides make_cache() and compact_kv_budget is set."""
+        import warnings
+
+        import mlx.nn as nn
+
+        from mlx_lm.models.cache import KVCache
+
+        class FakeModelWithMakeCache(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = [nn.Linear(32, 32) for _ in range(4)]
+
+            def make_cache(self):
+                return [KVCache() for _ in range(len(self.layers))]
+
+        model = FakeModelWithMakeCache()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            cache = make_prompt_cache(model, compact_kv_budget=256)
+            self.assertEqual(len(w), 1)
+            self.assertIn("make_cache()", str(w[0].message))
+            self.assertIn("compact_kv_budget", str(w[0].message))
+        # Should return KVCache from model's make_cache, not CompressedKVCache
+        self.assertIsInstance(cache[0], KVCache)
+
     def test_from_state_empty_cache(self):
         """Verify that from_state with empty state doesn't cause AttributeError."""
         cache = CompressedKVCache(budget=64, keep_recent=8)

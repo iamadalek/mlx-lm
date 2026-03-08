@@ -314,6 +314,15 @@ def maybe_compact_kv_cache(prompt_cache):
     if not all_compressed:
         return
 
+    # Fail fast on B>1 before doing any norm aggregation work
+    ref_keys = all_compressed[0].keys
+    if ref_keys is not None and ref_keys.shape[0] > 1:
+        raise ValueError(
+            "maybe_compact_kv_cache does not support batch size > 1. "
+            "After eviction, the scalar offset cannot represent "
+            "per-batch RoPE positions. Use BatchKVCache instead."
+        )
+
     # Validate uniform configuration across all layers
     ref = all_compressed[0]
     for i, c in enumerate(all_compressed):

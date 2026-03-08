@@ -55,12 +55,20 @@ def benchmark_memory(model, tokenizer):
         model(prompt_arr[None], cache=comp_cache)
         mx.eval([c.state for c in comp_cache])
 
-        # Use maybe_compact_kv_cache for cross-layer coherent eviction
-        # (matches the actual generation path). Note: bypasses hysteresis
-        # since we want to force compaction for the memory measurement.
-        for c in comp_cache:
-            if isinstance(c, CompressedKVCache) and c.size() > c.budget:
-                c.compact()
+        # Cross-layer coherent eviction: aggregate norms across layers
+        # and compute shared kept_indices, matching the production path in
+        # maybe_compact_kv_cache. We skip the hysteresis check here since
+        # we always want to force compaction for the memory measurement.
+        all_compressed = [c for c in comp_cache if isinstance(c, CompressedKVCache)]
+        ref = all_compressed[0]
+        agg_norms = None
+        for c in all_compressed:
+            active_keys = c.keys[..., : c.size(), :]
+            norms = mx.linalg.norm(active_keys, axis=-1).sum(axis=1)
+            agg_norms = norms if agg_norms is None else agg_norms + norms
+        kept_indices = ref.indices_from_norms(agg_norms)
+        for c in all_compressed:
+            c.compact(kept_indices)
         mx.eval([c.state for c in comp_cache])
 
         comp_mem = measure_cache_memory(comp_cache)

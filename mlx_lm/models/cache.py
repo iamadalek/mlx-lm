@@ -710,6 +710,11 @@ class CompressedKVCache(_BaseCache):
                 cross-layer coherent eviction (same tokens kept in all layers).
         """
         if self._physical_idx <= self.budget:
+            if kept_indices is not None:
+                raise ValueError(
+                    f"kept_indices provided but cache size ({self._physical_idx}) "
+                    f"<= budget ({self.budget}). Nothing to compact."
+                )
             return
 
         if self.keys.shape[0] > 1:
