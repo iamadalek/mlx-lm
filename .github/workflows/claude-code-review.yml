@@ -35,4 +35,5 @@ jobs:
             If no brief or issue is linked, review the PR based on its description and the diff against the base branch.
 
             Post your review findings as a PR review (not a comment). Use "APPROVE" for PASS verdicts and "REQUEST_CHANGES" for BLOCK verdicts.
-          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep,Agent,Skill"
+          additional_permissions: |
+            actions: read
