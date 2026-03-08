@@ -31,12 +31,9 @@ jobs:
                 "allow": [
                   "Bash(git diff*)",
                   "Bash(git log*)",
-                  "Bash(gh pr review*)",
                   "Bash(gh pr comment*)",
                   "Bash(gh issue view*)",
-                  "Bash(cat /tmp/*)",
-                  "Read",
-                  "Write(/tmp/*)"
+                  "Read"
                 ]
               }
             }
@@ -48,8 +45,13 @@ jobs:
             1. Read the PR diff by running: git diff origin/main...HEAD
             2. Read all changed files carefully using the Read tool
             3. Analyze the changes through the 4 review stages below
-            4. Write your review to /tmp/review.md using the Write tool
-            5. Post it using: gh pr comment $PR_NUMBER --repo $GITHUB_REPOSITORY --body-file /tmp/review.md
+            4. Post your review as a comment using a heredoc. You MUST use exactly this pattern:
+
+            gh pr comment $PR_NUMBER --repo $GITHUB_REPOSITORY --body-file - <<'ENDREVIEW'
+            <your full review here>
+            ENDREVIEW
+
+            IMPORTANT: Do NOT use the Write tool. Post the review directly using the heredoc command above.
 
             ## Review Stages
 
