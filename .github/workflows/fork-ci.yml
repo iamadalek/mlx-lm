@@ -1,0 +1,56 @@
+name: Fork CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    if: github.repository != 'ml-explore/mlx-lm'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - uses: pre-commit/action@v3.0.1
+
+  test:
+    if: github.repository != 'ml-explore/mlx-lm'
+    runs-on: macos-15
+    needs: lint
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test]"
+          pip install unittest-xml-reporting
+
+      - name: Download test data
+        run: |
+          curl -o test_data.zip -L https://github.com/ml-explore/mlx-lm/releases/download/test_data/test_data.zip
+          unzip test_data.zip
+
+      - name: Run tests
+        run: |
+          HF_HOME="." python -m xmlrunner discover -v tests -o test-results/
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
