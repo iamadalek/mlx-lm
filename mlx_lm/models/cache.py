@@ -751,29 +751,27 @@ class CompressedKVCache(_BaseCache):
 
         # Pad to next step boundary so update_and_fetch doesn't reallocate
         # on the very next token (keys.shape[2] must leave room for growth).
-        padded_len = ((n_kept + self.step - 1) // self.step) * self.step
-        if padded_len > n_kept:
-            k_pad = mx.zeros(
-                (
-                    *compacted_keys.shape[:2],
-                    padded_len - n_kept,
-                    compacted_keys.shape[3],
-                ),
-                compacted_keys.dtype,
-            )
-            v_pad = mx.zeros(
-                (
-                    *compacted_values.shape[:2],
-                    padded_len - n_kept,
-                    compacted_values.shape[3],
-                ),
-                compacted_values.dtype,
-            )
-            self.keys = mx.concatenate([compacted_keys, k_pad], axis=2)
-            self.values = mx.concatenate([compacted_values, v_pad], axis=2)
-        else:
-            self.keys = compacted_keys
-            self.values = compacted_values
+        # Always add at least one step of headroom, even when n_kept is
+        # already a multiple of step.
+        padded_len = ((n_kept // self.step) + 1) * self.step
+        k_pad = mx.zeros(
+            (
+                *compacted_keys.shape[:2],
+                padded_len - n_kept,
+                compacted_keys.shape[3],
+            ),
+            compacted_keys.dtype,
+        )
+        v_pad = mx.zeros(
+            (
+                *compacted_values.shape[:2],
+                padded_len - n_kept,
+                compacted_values.shape[3],
+            ),
+            compacted_values.dtype,
+        )
+        self.keys = mx.concatenate([compacted_keys, k_pad], axis=2)
+        self.values = mx.concatenate([compacted_values, v_pad], axis=2)
 
         self._physical_idx = n_kept
         # offset is NOT modified (critical invariant for RoPE)

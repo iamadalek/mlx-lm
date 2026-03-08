@@ -35,9 +35,10 @@ class TestCompressedKVCache(unittest.TestCase):
         self.assertEqual(cache.offset, 4096)
         # physical index should be budget
         self.assertEqual(cache._physical_idx, 2048)
-        # keys array should be exactly budget-sized
-        self.assertEqual(cache.keys.shape[2], 2048)
-        self.assertEqual(cache.values.shape[2], 2048)
+        # keys array should be padded beyond budget for headroom
+        self.assertGreaterEqual(cache.keys.shape[2], 2048)
+        self.assertEqual(cache.keys.shape[2] % cache.step, 0)
+        self.assertEqual(cache.values.shape[2], cache.keys.shape[2])
 
     def test_token_selection_correctness(self):
         cache = CompressedKVCache(budget=3, keep_recent=1)
@@ -628,6 +629,38 @@ class TestCompressedKVCache(unittest.TestCase):
         # Buffer shape unchanged (no concatenation happened)
         self.assertEqual(cache.keys.shape, buffer_shape_after_compact)
         self.assertEqual(cache._physical_idx, 65)
+
+    def test_no_reallocation_after_compact_step_multiple_budgets(self):
+        """When budget is a multiple of step (256), padding must still be added."""
+        for budget in [256, 512, 1024]:
+            with self.subTest(budget=budget):
+                cache = CompressedKVCache(budget=budget, keep_recent=32)
+                # Fill beyond budget to trigger compaction
+                n_tokens = budget + 128
+                keys = mx.random.normal(shape=(1, 1, n_tokens, 4))
+                values = mx.random.normal(shape=(1, 1, n_tokens, 4))
+                cache.update_and_fetch(keys, values)
+                mx.eval(cache.keys, cache.values)
+
+                cache.compact()
+                buffer_shape_after_compact = cache.keys.shape
+                self.assertEqual(cache._physical_idx, budget)
+                # Buffer must have room beyond the compacted data
+                self.assertGreater(
+                    buffer_shape_after_compact[2],
+                    cache._physical_idx,
+                    f"budget={budget}: no headroom after compaction",
+                )
+
+                # Append one token — should NOT trigger reallocation
+                new_keys = mx.random.normal(shape=(1, 1, 1, 4))
+                new_values = mx.random.normal(shape=(1, 1, 1, 4))
+                cache.update_and_fetch(new_keys, new_values)
+                self.assertEqual(
+                    cache.keys.shape,
+                    buffer_shape_after_compact,
+                    f"budget={budget}: buffer reallocated on next token",
+                )
 
 
 if __name__ == "__main__":
